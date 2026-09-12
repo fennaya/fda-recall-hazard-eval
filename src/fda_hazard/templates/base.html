@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}FDA recall hazard{% endblock %}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.12/htmx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.32.0/plotly.min.js"></script>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-sunken: #f5f6f8;
+  --bg-raised: #ffffff;
+  --border: #dcdfe4;
+  --border-strong: #b9bec7;
+  --text: #16191d;
+  --text-dim: #5c636e;
+  --text-faint: #868d99;
+  --accent: #2f5fd0;
+  --accent-soft: #e8eefc;
+  --good: #1d7a45;
+  --bad: #b3261e;
+  --warn: #8a5a00;
+  --c1: #b3261e;
+  --c2: #8a5a00;
+  --c3: #35637a;
+  --shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+html[data-theme="dark"] {
+  --bg: #0f1115;
+  --bg-sunken: #0a0c0f;
+  --bg-raised: #171a20;
+  --border: #272b33;
+  --border-strong: #3a404a;
+  --text: #e6e8ec;
+  --text-dim: #a0a7b4;
+  --text-faint: #6f7885;
+  --accent: #7aa2f7;
+  --accent-soft: #1a2337;
+  --good: #56c48a;
+  --bad: #f2787a;
+  --warn: #e0b155;
+  --c1: #f2787a;
+  --c2: #e0b155;
+  --c3: #7fb3d0;
+  --shadow: 0 1px 2px rgba(0,0,0,.4);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+/* Tabular numerals everywhere a number can appear. */
+table, .num, td, th, .metric-value, code, pre { font-variant-numeric: tabular-nums; }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+
+header {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 22px;
+  padding: 0 24px; height: 52px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+header .brand { font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
+header nav { display: flex; gap: 4px; }
+header nav a {
+  padding: 6px 12px; border-radius: 6px; text-decoration: none;
+  color: var(--text-dim); font-weight: 500;
+}
+header nav a:hover { background: var(--bg-sunken); color: var(--text); }
+header nav a.active { background: var(--accent-soft); color: var(--accent); }
+header .spacer { flex: 1; }
+button.theme {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-dim); border-radius: 6px; padding: 5px 11px;
+  cursor: pointer; font: inherit; font-size: 13px;
+}
+button.theme:hover { border-color: var(--border-strong); color: var(--text); }
+
+main { max-width: 1320px; margin: 0 auto; padding: 26px 24px 80px; }
+h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -.015em; font-weight: 640; }
+h2 { font-size: 15px; margin: 30px 0 12px; font-weight: 620; letter-spacing: -.005em; }
+h3 { font-size: 13px; margin: 0 0 8px; font-weight: 600; color: var(--text-dim); }
+p.lede { color: var(--text-dim); margin: 0 0 18px; max-width: 78ch; }
+
+.card {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 10px; padding: 18px; box-shadow: var(--shadow);
+}
+.grid { display: grid; gap: 16px; }
+.cols-2 { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.cols-4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+
+.metric-label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--text-faint); font-weight: 600; }
+.metric-value { font-size: 27px; font-weight: 600; letter-spacing: -.02em; margin: 5px 0 2px; }
+.metric-sub { font-size: 12px; color: var(--text-dim); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-faint);
+  padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--bg-sunken); }
+td.r, th.r { text-align: right; }
+.table-wrap { overflow-x: auto; }
+
+.tag {
+  display: inline-block; padding: 1px 7px; border-radius: 4px;
+  font-size: 11px; font-weight: 600; border: 1px solid transparent; white-space: nowrap;
+}
+.tag.c1 { color: var(--c1); border-color: var(--c1); }
+.tag.c2 { color: var(--c2); border-color: var(--c2); }
+.tag.c3 { color: var(--c3); border-color: var(--c3); }
+.tag.muted { color: var(--text-dim); border-color: var(--border-strong); }
+.tag.agent { color: var(--accent); border-color: var(--accent); }
+
+.delta.up { color: var(--good); }
+.delta.down { color: var(--bad); }
+.delta.flat { color: var(--text-faint); }
+.good { color: var(--good); } .bad { color: var(--bad); } .dim { color: var(--text-dim); }
+
+.pill-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+a.pill, .pill {
+  font-size: 12px; padding: 4px 10px; border: 1px solid var(--border);
+  border-radius: 999px; color: var(--text-dim); text-decoration: none; cursor: pointer;
+  background: var(--bg-raised);
+}
+a.pill:hover { border-color: var(--border-strong); color: var(--text); }
+a.pill.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+input[type=text], textarea, select {
+  width: 100%; background: var(--bg-sunken); color: var(--text);
+  border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px;
+  font: inherit; font-size: 13px;
+}
+textarea { resize: vertical; min-height: 84px; line-height: 1.55; }
+input:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--accent);
+}
+label.field { display: block; margin-bottom: 13px; }
+label.field > span { display: block; font-size: 12px; color: var(--text-dim);
+  margin-bottom: 5px; font-weight: 500; }
+button.primary {
+  background: var(--accent); color: #fff; border: none; border-radius: 7px;
+  padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer;
+}
+button.primary:hover { filter: brightness(1.08); }
+button.primary:disabled { opacity: .55; cursor: default; }
+
+details.case { border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 10px; background: var(--bg-raised); overflow: hidden; }
+details.case > summary { padding: 11px 14px; cursor: pointer; list-style: none;
+  display: flex; gap: 12px; align-items: center; }
+details.case > summary::-webkit-details-marker { display: none; }
+details.case[open] > summary { border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken); }
+.case-body { padding: 14px; display: grid; gap: 14px; }
+.case-body h3 { margin-top: 0; }
+.quote { background: var(--bg-sunken); border-left: 2px solid var(--border-strong);
+  padding: 9px 12px; border-radius: 0 6px 6px 0; font-size: 13px;
+  white-space: pre-wrap; line-height: 1.55; }
+.cost-chip { font-weight: 650; font-size: 13px; }
+.empty { color: var(--text-dim); padding: 30px; text-align: center;
+  border: 1px dashed var(--border); border-radius: 10px; }
+.note { font-size: 12px; color: var(--text-dim); }
+.htmx-request .spin { display: inline; }
+.spin { display: none; }
+.plot { width: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">FDA recall hazard</span>
+  <nav>
+    <a href="/" class="{{ 'active' if nav == 'overview' }}">Overview</a>
+    <a href="/runs" class="{{ 'active' if nav == 'runs' }}">Runs</a>
+    <a href="/errors" class="{{ 'active' if nav == 'errors' }}">Errors</a>
+    <a href="/case" class="{{ 'active' if nav == 'case' }}">Single case</a>
+  </nav>
+  <span class="spacer"></span>
+  <button class="theme" onclick="toggleTheme()" id="themeBtn">Light</button>
+</header>
+<main>
+{% block body %}{% endblock %}
+</main>
+<script>
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme');
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('theme', t); } catch (e) {}
+  document.getElementById('themeBtn').textContent = t === 'dark' ? 'Light' : 'Dark';
+  document.dispatchEvent(new CustomEvent('themechange'));
+}
+function toggleTheme() { applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'); }
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem('theme'); } catch (e) {}
+  if (!saved) {
+    saved = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+      ? 'light' : 'dark';
+  }
+  applyTheme(saved);
+})();
+
+// Plotly figures re-render on theme change so they never keep stale colors.
+window.plotRegistry = [];
+function themeColors() {
+  var s = getComputedStyle(document.documentElement);
+  return {
+    text: s.getPropertyValue('--text').trim(),
+    dim: s.getPropertyValue('--text-dim').trim(),
+    grid: s.getPropertyValue('--border').trim(),
+    c1: s.getPropertyValue('--c1').trim(),
+    c2: s.getPropertyValue('--c2').trim(),
+    c3: s.getPropertyValue('--c3').trim(),
+    accent: s.getPropertyValue('--accent').trim()
+  };
+}
+function baseLayout() {
+  var c = themeColors();
+  return {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: c.dim, family: 'ui-sans-serif, system-ui, sans-serif', size: 12 },
+    margin: { l: 62, r: 16, t: 16, b: 42 },
+    xaxis: { gridcolor: c.grid, zerolinecolor: c.grid },
+    yaxis: { gridcolor: c.grid, zerolinecolor: c.grid }
+  };
+}
+function register(fn) { window.plotRegistry.push(fn); fn(); }
+document.addEventListener('themechange', function () {
+  window.plotRegistry.forEach(function (fn) { fn(); });
+});
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

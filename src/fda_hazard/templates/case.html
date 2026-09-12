@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% set nav = 'case' %}
+{% block title %}Single case - FDA recall hazard{% endblock %}
+{% block body %}
+
+<h1>Single case</h1>
+<p class="lede">
+  Paste a recall and run the agent live. Precedents come from the training split
+  only, the same index the evaluation uses.
+</p>
+
+{% if not providers %}
+<div class="card" style="border-color: var(--warn); margin-bottom: 16px;">
+  <strong>No provider key set.</strong>
+  <p class="note" style="margin: 6px 0 0;">
+    Set one of <code>GROQ_API_KEY</code>, <code>OPENROUTER_API_KEY</code>,
+    <code>BASETEN_API_KEY</code> or <code>ANTHROPIC_API_KEY</code> in
+    <code>.env</code> and restart the server.
+  </p>
+</div>
+{% endif %}
+
+<div class="grid cols-2">
+  <div class="card">
+    <form hx-post="/case/run" hx-target="#result" hx-swap="innerHTML"
+          hx-indicator="#busy">
+      <label class="field">
+        <span>Product description</span>
+        <textarea name="product_description" rows="3"
+          placeholder="Atorvastatin Calcium Tablets, 20 mg, 90-count bottles, Rx only"></textarea>
+      </label>
+      <label class="field">
+        <span>Reason for recall</span>
+        <textarea name="reason_for_recall" rows="6"
+          placeholder="Lack of Assurance of Sterility: product was distributed after a media fill failure..."></textarea>
+      </label>
+      <label class="field">
+        <span>Precedents to retrieve</span>
+        <input type="text" name="k" value="5" style="max-width: 90px;">
+      </label>
+      <button class="primary" type="submit" {{ 'disabled' if not providers }}>
+        Classify
+      </button>
+      <span id="busy" class="htmx-indicator note" style="margin-left: 10px;">
+        running the agent...
+      </span>
+    </form>
+  </div>
+
+  <div id="result">
+    <div class="empty">Results will appear here.</div>
+  </div>
+</div>
+{% endblock %}

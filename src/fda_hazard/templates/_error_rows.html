@@ -1,0 +1,107 @@
+{% if not rows %}
+  <div class="empty">No errors match this filter.</div>
+{% else %}
+<p class="note" style="margin: 0 0 10px;">{{ "{:,}".format(rows | length) }} misclassifications shown.</p>
+{% for e in rows %}
+<details class="case">
+  <summary>
+    <span class="cost-chip" style="min-width: 34px; color: {{ 'var(--c1)' if e.cost >= 5 else 'var(--text-dim)' }};">
+      {{ "%.0f"|format(e.cost) }}
+    </span>
+    <span>
+      <span class="tag {{ 'c1' if e.truth == 'Class I' else ('c2' if e.truth == 'Class II' else 'c3') }}">FDA: {{ e.truth }}</span>
+      <span class="dim">&rarr;</span>
+      <span class="tag muted">said: {{ e.predicted }}</span>
+    </span>
+    {% if e.is_class1_miss %}
+      <span class="tag c1">CLASS I MISS</span>
+    {% endif %}
+    <span class="note" style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+      {{ e.reason_for_recall[:120] }}
+    </span>
+    <span class="note mono">{{ e.init_date or "" }}</span>
+    {% if e.confidence is not none %}
+      <span class="note">conf {{ "%.2f"|format(e.confidence) }}</span>
+    {% endif %}
+  </summary>
+
+  <div class="case-body">
+    <div>
+      <h3>Reason for recall (FDA text)</h3>
+      <div class="quote">{{ e.reason_for_recall }}</div>
+    </div>
+
+    <div>
+      <h3>Product</h3>
+      <div class="quote">{{ e.product_description }}</div>
+      <p class="note">
+        {{ e.recalling_firm or "unknown firm" }}
+        {% if e.distribution_pattern %}&middot; {{ e.distribution_pattern }}{% endif %}
+        {% if e.recall_number %}&middot; <span class="mono">{{ e.recall_number }}</span>{% endif %}
+      </p>
+    </div>
+
+    {% if e.reasoning %}
+    <div>
+      <h3>Agent reasoning</h3>
+      <div class="quote">{{ e.reasoning }}</div>
+    </div>
+    {% endif %}
+
+    {% if e.precedents %}
+    <div>
+      <h3>Precedents retrieved ({{ e.n_cited }} cited by the agent)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th></th><th>Recall</th><th>FDA class</th>
+              <th class="r">Similarity</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in e.precedents %}
+            <tr>
+              <td>{% if p.cited %}<span class="tag agent">cited</span>{% endif %}</td>
+              <td class="mono dim">{{ p.record_key }}</td>
+              <td>
+                <span class="tag {{ 'c1' if p.classification == 'Class I' else ('c2' if p.classification == 'Class II' else 'c3') }}">
+                  {{ p.classification }}
+                </span>
+              </td>
+              <td class="r">{{ "%.3f"|format(p.similarity) }}</td>
+              <td class="dim">{{ p.reason_for_recall[:150] }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% elif e.confidence is not none %}
+      <p class="note">No precedents were retrieved for this case.</p>
+    {% endif %}
+
+    {% if e.tool_calls %}
+    <div>
+      <h3>Tool calls</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th class="r">Turn</th><th>Tool</th><th>Arguments</th><th>Result</th></tr></thead>
+          <tbody>
+            {% for t in e.tool_calls %}
+            <tr>
+              <td class="r dim">{{ t.turn }}</td>
+              <td class="mono">{{ t.tool }}</td>
+              <td class="note mono">{{ t.args | tojson | truncate(170) }}</td>
+              <td class="note mono">{{ (t.result_summary | tojson | truncate(170)) if t.result_summary else "" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</details>
+{% endfor %}
+{% endif %}

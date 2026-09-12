@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% set nav = 'errors' %}
+{% block title %}Errors - FDA recall hazard{% endblock %}
+{% block body %}
+
+<h1>Errors</h1>
+<p class="lede">
+  Every misclassification in a run, sorted by cost. Each row shows the recall
+  text FDA classified, what the agent concluded and why, and which precedents it
+  cited. Class I misses are the expensive ones and are marked.
+</p>
+
+{% if not run %}
+  <div class="empty">No runs recorded yet.</div>
+{% else %}
+
+<div class="card" style="margin-bottom: 16px;">
+  <div class="pill-row" style="gap: 14px;">
+    <div>
+      <div class="metric-label">Run</div>
+      <form method="get" action="/errors" style="margin-top: 5px;">
+        <select name="run" onchange="this.form.submit()" style="min-width: 330px;">
+          {% for r in runs %}
+          <option value="{{ r.run_uid }}" {{ 'selected' if r.run_uid == run.run_uid }}>
+            {{ r.system }} &middot; {{ r.created_at.replace("T"," ").replace("+00:00","") }}
+            &middot; acc {{ "%.1f"|format(r.accuracy * 100) }}%
+            {% if r.model %}&middot; {{ r.model }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+    <div>
+      <div class="metric-label">Errors</div>
+      <div class="metric-value" style="font-size: 21px;">
+        {{ "{:,}".format(summary.n_errors) }}
+        <span class="note">of {{ "{:,}".format(summary.n_total) }}</span>
+      </div>
+    </div>
+    <div>
+      <div class="metric-label">Total cost</div>
+      <div class="metric-value" style="font-size: 21px;">{{ "{:,.0f}".format(summary.total_cost) }}</div>
+    </div>
+    <div>
+      <div class="metric-label">Class I missed</div>
+      <div class="metric-value" style="font-size: 21px; color: var(--c1);">
+        {{ run.class1_missed }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom: 16px;">
+  <h3>Where the cost is</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>FDA truth</th><th>Predicted</th>
+          <th class="r">Count</th><th class="r">Unit cost</th><th class="r">Total cost</th>
+          <th class="r">Share of cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in summary.buckets %}
+        <tr>
+          <td><span class="tag {{ 'c1' if b.truth == 'Class I' else ('c2' if b.truth == 'Class II' else 'c3') }}">{{ b.truth }}</span></td>
+          <td><span class="tag muted">{{ b.predicted }}</span></td>
+          <td class="r">{{ "{:,}".format(b.n) }}</td>
+          <td class="r">{{ "%.0f"|format(b.unit_cost) }}</td>
+          <td class="r">{{ "{:,.0f}".format(b.cost) }}</td>
+          <td class="r">{{ "%.1f"|format(100 * b.cost / summary.total_cost) if summary.total_cost else "-" }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="pill-row" style="margin-bottom: 14px;">
+  <span class="metric-label">Sort</span>
+  {% for s, label in [('cost','cost'), ('confidence','confidence'), ('date','date'), ('truth','truth class')] %}
+    <a class="pill {{ 'on' if sort == s }}"
+       hx-get="/errors/rows?run={{ run.run_uid }}&sort={{ s }}{% if truth %}&truth={{ truth }}{% endif %}{% if predicted %}&predicted={{ predicted }}{% endif %}"
+       hx-target="#rows" hx-swap="innerHTML"
+       hx-on::after-request="document.querySelectorAll('.pill-sort').forEach(e=>e.classList.remove('on')); this.classList.add('on')"
+       class="pill pill-sort {{ 'on' if sort == s }}">{{ label }}</a>
+  {% endfor %}
+
+  <span class="metric-label" style="margin-left: 16px;">FDA truth</span>
+  <a class="pill {{ 'on' if not truth }}" href="/errors?run={{ run.run_uid }}&sort={{ sort }}">all</a>
+  {% for c in LABEL_CLASSES %}
+    <a class="pill {{ 'on' if truth == c }}"
+       href="/errors?run={{ run.run_uid }}&sort={{ sort }}&truth={{ c }}">{{ c }}</a>
+  {% endfor %}
+</div>
+
+<div id="rows">
+  {% include "_error_rows.html" %}
+</div>
+
+{% endif %}
+{% endblock %}

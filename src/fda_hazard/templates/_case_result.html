@@ -1,0 +1,77 @@
+{% if error %}
+  <div class="card" style="border-color: var(--bad);">
+    <h3 style="color: var(--bad);">Could not classify</h3>
+    <div class="quote">{{ error }}</div>
+  </div>
+{% elif result %}
+  <div class="card">
+    <div class="pill-row" style="justify-content: space-between; margin-bottom: 14px;">
+      <span class="tag {{ 'c1' if result.classification == 'Class I' else ('c2' if result.classification == 'Class II' else 'c3') }}"
+            style="font-size: 15px; padding: 5px 13px;">
+        {{ result.classification }}
+      </span>
+      <span class="note">
+        confidence {{ "%.2f"|format(result.confidence) }}
+        &middot; {{ provider }}/{{ model }}
+        &middot; {{ result.latency_ms }} ms{% if result.cache_hit %} (cached){% endif %}
+      </span>
+    </div>
+
+    {% if result.error %}
+      <p class="note bad">Agent warning: {{ result.error }}</p>
+    {% endif %}
+
+    <h3>Reasoning</h3>
+    <div class="quote">{{ result.reasoning or "(none given)" }}</div>
+
+    {% if precedents %}
+    <h3 style="margin-top: 16px;">
+      Precedents retrieved ({{ result.precedents_cited | length }} cited)
+    </h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th></th><th>Recall</th><th>FDA class</th><th class="r">Sim.</th><th>Reason</th></tr>
+        </thead>
+        <tbody>
+          {% for p in precedents %}
+          <tr>
+            <td>{% if p.cited %}<span class="tag agent">cited</span>{% endif %}</td>
+            <td class="mono dim">{{ p.record_key }}</td>
+            <td>
+              <span class="tag {{ 'c1' if p.classification == 'Class I' else ('c2' if p.classification == 'Class II' else 'c3') }}">
+                {{ p.classification }}
+              </span>
+            </td>
+            <td class="r">{{ "%.3f"|format(p.similarity) }}</td>
+            <td class="dim">{{ p.reason_for_recall[:140] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="note" style="margin-top: 14px;">The agent retrieved no precedents.</p>
+    {% endif %}
+
+    {% if result.tool_calls %}
+    <h3 style="margin-top: 16px;">Tool calls</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th class="r">Turn</th><th>Tool</th><th>Result</th></tr></thead>
+        <tbody>
+          {% for t in result.tool_calls %}
+          <tr>
+            <td class="r dim">{{ t.turn }}</td>
+            <td class="mono">{{ t.tool }}</td>
+            <td class="note mono">{{ (t.result_summary | tojson | truncate(160)) if t.get('result_summary') else "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="empty">Results will appear here.</div>
+{% endif %}

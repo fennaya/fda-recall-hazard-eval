@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set nav = 'runs' %}
+{% block title %}Runs - FDA recall hazard{% endblock %}
+{% macro delta(d, digits=3, as_pct=false) %}
+  {% if d.unchanged %}
+    <span class="delta flat">0</span>
+  {% else %}
+    <span class="delta {{ 'up' if d.better else 'down' }}">
+      {{ '+' if d.delta > 0 else '' }}{% if as_pct %}{{ "%.1f"|format(d.delta * 100) }}pp{% else %}{{ "%.*f"|format(digits, d.delta) }}{% endif %}
+    </span>
+  {% endif %}
+{% endmacro %}
+{% block body %}
+
+<h1>Runs</h1>
+<p class="lede">
+  Every evaluation ever recorded, newest first, each with its git SHA and prompt
+  version. Deltas compare against the previous run of the same system.
+</p>
+
+{% if not runs %}
+  <div class="empty">No runs yet.</div>
+{% else %}
+<div class="card table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>When</th><th>System</th><th>Model</th><th>Prompt</th><th>Commit</th>
+        <th class="r">n</th>
+        <th class="r">Accuracy</th><th class="r">Macro F1</th>
+        <th class="r">Class I recall</th><th class="r">Mean cost</th>
+        <th>Run</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in runs %}
+      {% set r = item.row %}{% set d = item.diff %}
+      <tr>
+        <td class="dim mono" style="white-space: nowrap;">{{ r.created_at.replace("T", " ").replace("+00:00", "") }}</td>
+        <td>
+          {% if r.system == 'agent' %}<span class="tag agent">agent</span>
+          {% else %}<span class="tag muted">baseline</span>{% endif %}
+          <div class="note">{{ r.system }}</div>
+        </td>
+        <td class="dim">
+          {{ r.model or "-" }}
+          {% if r.provider %}<div class="note">{{ r.provider }}</div>{% endif %}
+        </td>
+        <td class="mono dim">
+          {{ r.prompt_version or "-" }}
+          {% if r.prompt_sha %}<div class="note">{{ r.prompt_sha }}</div>{% endif %}
+        </td>
+        <td class="mono dim">
+          {{ r.git_sha[:9] if r.git_sha else "-" }}
+          {% if r.git_dirty %}<div class="note bad">dirty tree</div>{% endif %}
+        </td>
+        <td class="r">{{ "{:,}".format(r.n_examples) }}</td>
+        <td class="r">
+          {{ r.accuracy | pct }}
+          {% if d and 'accuracy' in d.deltas %}<div class="note">{{ delta(d.deltas.accuracy, as_pct=true) }}</div>{% endif %}
+        </td>
+        <td class="r">
+          {{ r.macro_f1 | fmt(3) }}
+          {% if d and 'macro_f1' in d.deltas %}<div class="note">{{ delta(d.deltas.macro_f1) }}</div>{% endif %}
+        </td>
+        <td class="r">
+          {{ r.class1_recall | pct }}
+          {% if d and 'class1_recall' in d.deltas %}<div class="note">{{ delta(d.deltas.class1_recall, as_pct=true) }}</div>{% endif %}
+        </td>
+        <td class="r">
+          {{ r.mean_cost | fmt(3) }}
+          {% if d and 'mean_cost' in d.deltas %}<div class="note">{{ delta(d.deltas.mean_cost) }}</div>{% endif %}
+        </td>
+        <td>
+          <a class="pill" href="/errors?run={{ r.run_uid }}">errors</a>
+          <div class="note mono">{{ r.run_uid }}</div>
+        </td>
+      </tr>
+      {% if d and (d.prompt_changed or d.model_changed or d.sha_changed) %}
+      <tr>
+        <td></td>
+        <td colspan="10" class="note">
+          Changed against {{ d.prev_uid }}:
+          {% if d.prompt_changed %}<span class="tag muted">prompt {{ d.prev_prompt_version }} &rarr; {{ r.prompt_version }}</span>{% endif %}
+          {% if d.model_changed %}<span class="tag muted">model {{ d.prev_model or "none" }} &rarr; {{ r.model or "none" }}</span>{% endif %}
+          {% if d.sha_changed %}<span class="tag muted">code changed</span>{% endif %}
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

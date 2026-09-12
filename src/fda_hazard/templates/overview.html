@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% set nav = 'overview' %}
+{% block title %}Overview - FDA recall hazard{% endblock %}
+{% block body %}
+
+<h1>Overview</h1>
+<p class="lede">
+  Held-out test split: recalls initiated on or after {{ cutoff }}.
+  Every number on this page is read from a row written by an evaluation run.
+</p>
+
+{% if not board %}
+  <div class="empty">
+    No evaluation runs recorded yet. Run <code>uv run -m fda_hazard.baselines</code>.
+  </div>
+{% else %}
+
+{% if not has_agent %}
+  <div class="card" style="border-color: var(--warn); margin-bottom: 18px;">
+    <strong>No agent run yet.</strong>
+    <span class="note">
+      Baselines below are the bar to beat. Set a provider key, then run
+      <code>uv run -m fda_hazard.evaluate</code>.
+    </span>
+  </div>
+{% endif %}
+
+{% if headline %}
+<div class="grid cols-4">
+  <div class="card">
+    <div class="metric-label">Accuracy</div>
+    <div class="metric-value">{{ headline.accuracy | pct }}</div>
+    <div class="metric-sub">{{ headline.label }}, n={{ "{:,}".format(headline.n) }}</div>
+  </div>
+  <div class="card">
+    <div class="metric-label">Macro F1</div>
+    <div class="metric-value">{{ headline.macro_f1 | fmt(3) }}</div>
+    <div class="metric-sub">unweighted mean over three classes</div>
+  </div>
+  <div class="card" style="border-color: var(--c1);">
+    <div class="metric-label">Class I recall</div>
+    <div class="metric-value">{{ headline.class1_recall | pct }}</div>
+    <div class="metric-sub">
+      missed {{ headline.class1_missed }} of {{ headline.class1_support }}
+      &middot; 95% CI {{ headline.class1_ci[0] | fmt(2) }}-{{ headline.class1_ci[1] | fmt(2) }}
+    </div>
+  </div>
+  <div class="card">
+    <div class="metric-label">Mean cost</div>
+    <div class="metric-value">{{ headline.mean_cost | fmt(3) }}</div>
+    <div class="metric-sub">total {{ "{:,.0f}".format(headline.total_cost) }} &middot; lower is better</div>
+  </div>
+</div>
+{% endif %}
+
+<h2>Agent versus baselines</h2>
+<div class="card table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>System</th><th>Model</th>
+        <th class="r">Accuracy</th><th class="r">Macro F1</th>
+        <th class="r">Class I recall</th><th class="r">Class I missed</th>
+        <th class="r">Mean cost</th><th class="r">Total cost</th><th>Run</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in board %}
+      <tr>
+        <td>
+          {% if r.is_agent %}<span class="tag agent">agent</span>
+          {% else %}<span class="tag muted">baseline</span>{% endif %}
+          {{ r.label }}
+        </td>
+        <td class="dim">{{ r.model or "-" }}</td>
+        <td class="r">{{ r.accuracy | pct }}</td>
+        <td class="r">{{ r.macro_f1 | fmt(3) }}</td>
+        <td class="r">{{ r.class1_recall | pct }}</td>
+        <td class="r">{{ r.class1_missed }} / {{ r.class1_support }}</td>
+        <td class="r">{{ r.mean_cost | fmt(3) }}</td>
+        <td class="r">{{ "{:,.0f}".format(r.total_cost) }}</td>
+        <td class="mono dim">{{ r.run_uid }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">
+  Cost matrix: predicting Class II when the truth is Class I costs 5, the reverse costs 1.
+  Under-calling hazard severity is always penalised more than over-calling.
+</p>
+
+<div class="grid cols-2" style="margin-top: 26px;">
+  <div class="card">
+    <h3>Confusion matrix{% if headline %} &mdash; {{ headline.label }}{% endif %}</h3>
+    <div id="confusion" class="plot" style="height: 330px;"></div>
+    <p class="note">Rows are FDA's classification. Columns are the prediction.</p>
+  </div>
+  <div class="card">
+    <h3>Corpus class distribution</h3>
+    <div id="dist" class="plot" style="height: 330px;"></div>
+    <p class="note">
+      Train ({{ "{:,}".format(split.train_total) }}) before {{ cutoff }},
+      test ({{ "{:,}".format(split.test_total) }}) after. No event_id spans the cut.
+    </p>
+  </div>
+</div>
+
+<h2>Accuracy over time by recall year</h2>
+<div class="card">
+  <div id="byyear" class="plot" style="height: 300px;"></div>
+  <p class="note">
+    Accuracy per recall-initiation year within the held-out split, with the
+    number of recalls in each year.
+  </p>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+var CONFUSION = {{ confusion_json | safe }};
+var BYYEAR = {{ by_year_json | safe }};
+var DIST = {{ dist_json | safe }};
+var LABELS = {{ LABEL_CLASSES | list | tojson }};
+
+if (CONFUSION) register(function () {
+  var c = themeColors();
+  var z = LABELS.map(function (t) {
+    return LABELS.map(function (p) { return CONFUSION[t][p]; });
+  });
+  // Row-normalised for color so the dominant Class II row does not flatten
+  // everything else; the annotation still shows the raw count.
+  var zn = z.map(function (row) {
+    var s = row.reduce(function (a, b) { return a + b; }, 0) || 1;
+    return row.map(function (v) { return v / s; });
+  });
+  var ann = [];
+  for (var i = 0; i < LABELS.length; i++) {
+    for (var j = 0; j < LABELS.length; j++) {
+      ann.push({
+        x: LABELS[j], y: LABELS[i], text: z[i][j].toLocaleString(),
+        showarrow: false,
+        font: { color: zn[i][j] > 0.55 ? '#fff' : c.dim, size: 13 }
+      });
+    }
+  }
+  var layout = Object.assign(baseLayout(), {
+    annotations: ann,
+    margin: { l: 82, r: 16, t: 10, b: 56 },
+    xaxis: { title: 'predicted', gridcolor: 'rgba(0,0,0,0)' },
+    yaxis: { title: 'FDA truth', autorange: 'reversed', gridcolor: 'rgba(0,0,0,0)' }
+  });
+  Plotly.react('confusion', [{
+    type: 'heatmap', x: LABELS, y: LABELS, z: zn,
+    customdata: z, hovertemplate:
+      'truth %{y}<br>predicted %{x}<br>%{customdata} recalls<extra></extra>',
+    colorscale: [[0, 'rgba(127,127,127,0.05)'], [1, c.accent]],
+    showscale: false, xgap: 3, ygap: 3
+  }], layout, { displayModeBar: false, responsive: true });
+});
+
+register(function () {
+  var c = themeColors();
+  var colors = { 'Class I': c.c1, 'Class II': c.c2, 'Class III': c.c3 };
+  var layout = Object.assign(baseLayout(), {
+    margin: { l: 72, r: 16, t: 10, b: 42 },
+    xaxis: { gridcolor: c.grid, title: 'recalls' },
+    yaxis: { gridcolor: 'rgba(0,0,0,0)', autorange: 'reversed' }
+  });
+  Plotly.react('dist', [{
+    type: 'bar', orientation: 'h',
+    y: DIST.map(function (d) { return d.cls; }),
+    x: DIST.map(function (d) { return d.n; }),
+    text: DIST.map(function (d) {
+      return d.n.toLocaleString() + '  (' + (d.share * 100).toFixed(1) + '%)';
+    }),
+    textposition: 'auto',
+    marker: { color: DIST.map(function (d) { return colors[d.cls]; }) },
+    hovertemplate: '%{y}: %{x:,} recalls<extra></extra>'
+  }], layout, { displayModeBar: false, responsive: true });
+});
+
+register(function () {
+  var c = themeColors();
+  var layout = Object.assign(baseLayout(), {
+    margin: { l: 58, r: 58, t: 10, b: 42 },
+    xaxis: { title: 'recall initiation year', gridcolor: c.grid, type: 'category' },
+    yaxis: { title: 'accuracy', range: [0, 1], tickformat: '.0%', gridcolor: c.grid },
+    yaxis2: { title: 'recalls', overlaying: 'y', side: 'right',
+              gridcolor: 'rgba(0,0,0,0)', rangemode: 'tozero' },
+    showlegend: false
+  });
+  Plotly.react('byyear', [
+    { type: 'bar', x: BYYEAR.map(function (d) { return d.year; }),
+      y: BYYEAR.map(function (d) { return d.n; }), yaxis: 'y2',
+      marker: { color: c.grid }, hovertemplate: '%{x}: %{y:,} recalls<extra></extra>' },
+    { type: 'scatter', mode: 'lines+markers',
+      x: BYYEAR.map(function (d) { return d.year; }),
+      y: BYYEAR.map(function (d) { return d.accuracy; }),
+      line: { color: c.accent, width: 2 }, marker: { size: 7 },
+      hovertemplate: '%{x}: %{y:.1%} accuracy<extra></extra>' }
+  ], layout, { displayModeBar: false, responsive: true });
+});
+</script>
+{% endblock %}

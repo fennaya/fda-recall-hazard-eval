@@ -200,3 +200,84 @@ def test_result_detail_is_json_serialisable(agent_parts):
     json.dumps(detail)  # must not raise
     assert detail["record_key"] == "R-1"
     assert detail["precedents"]["cited"] == ["A-1"]
+
+
+# -- resilience to per-case failures -----------------------------------------
+# Regression guard: a single case raising ANY exception used to crash the
+# entire multi-hour evaluation. classify() must never raise.
+
+
+class ExplodingClient(FakeClient):
+    """Raises on the Nth call (1-indexed), then behaves normally."""
+
+    def __init__(self, script, explode_on_call: int, exc: Exception):
+        super().__init__(script)
+        self.explode_on_call = explode_on_call
+        self.exc = exc
+        self._n = 0
+
+    def chat(self, messages, tools=None, tool_choice=None):
+        self._n += 1
+        if self._n == self.explode_on_call:
+            raise self.exc
+        return super().chat(messages, tools=tools, tool_choice=tool_choice)
+
+
+def test_classify_never_raises_on_an_arbitrary_exception(agent_parts):
+    conn, index, test = agent_parts
+    client = ExplodingClient([submit("Class II")], explode_on_call=1,
+                              exc=RuntimeError("groq returned 500: server error"))
+    agent = HazardAgent(client, index, conn, allow_network_lookups=False)
+    result = agent.classify(test[0])  # must not raise
+    assert result.classification == "Class II"
+    assert result.confidence == 0.0
+    assert result.error is not None and "RuntimeError" in result.error
+
+
+def test_classify_recovers_from_a_forced_tool_choice_mismatch(agent_parts):
+    """The exact failure observed on a real Groq run: forcing tool_choice on
+    the final turn still let the model try a different tool, and Groq
+    hard-rejected the mismatch instead of coercing it."""
+    conn, index, test = agent_parts
+    mismatch = RuntimeError(
+        'groq returned 400: {"error":{"message":"Tool call validation failed: '
+        "tool call validation failed: attempted to call tool 'find_precedents' "
+        "which does not match request.tool_choice: 'submit_classification'\", "
+        '"code":"tool_use_failed"}}'
+    )
+
+    class OneForcedMismatchThenSubmit(FakeClient):
+        def __init__(self):
+            super().__init__([])
+            self.calls = 0
+
+        def chat(self, messages, tools=None, tool_choice=None):
+            self.calls += 1
+            if tool_choice == "submit_classification":
+                raise mismatch
+            return ChatResponse(
+                text="", tool_calls=[], raw={}, cache_hit=False, latency_ms=1,
+            )
+
+    client = OneForcedMismatchThenSubmit()
+    agent = HazardAgent(client, index, conn, allow_network_lookups=False)
+    result = agent.classify(test[0])  # must not raise
+    # Recovers by retrying unforced; model still doesn't submit, so the case
+    # ends via the normal turn-limit fallback -- not a crash, not an exception.
+    assert result.classification == "Class II"
+    assert client.calls >= 2  # the forced attempt, then the unforced retry
+
+
+def test_a_crashing_case_does_not_stop_the_rest_of_the_batch(agent_parts):
+    """The actual bug: one bad case used to kill every case after it too."""
+    conn, index, test = agent_parts
+    examples = (test * 3)[:3]
+    # Call #2 explodes; calls #1 and #3 (the two surviving cases) each need a
+    # scripted response of their own.
+    client = ExplodingClient([submit("Class I"), submit("Class I")], explode_on_call=2,
+                              exc=RuntimeError("groq returned 400: boom"))
+    agent = HazardAgent(client, index, conn, allow_network_lookups=False)
+    results = [agent.classify(ex) for ex in examples]
+    assert len(results) == 3
+    assert results[1].error is not None  # the exploding one is flagged
+    assert results[0].error is None and results[2].error is None

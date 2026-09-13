@@ -304,7 +304,7 @@ class LLMClient:
         return message.get("content") or "", calls
 
     def _request_with_retry(
-        self, payload: dict[str, Any], max_attempts: int = 6
+        self, payload: dict[str, Any], max_attempts: int = 12
     ) -> httpx.Response:
         """POST with backoff on 429 (rate limit), 5xx, and connection failures.
 
@@ -315,6 +315,12 @@ class LLMClient:
         blip or dropped connection (httpx.TransportError) is expected at some
         point; without retrying those too, one flaky lookup kills the entire
         evaluation instead of the one request that hit it.
+
+        max_attempts=12 (not the earlier 6): on a run spanning many hours, a
+        single case hitting several consecutive large retry-after windows is
+        normal wear, not a sign anything is broken -- exhausting retries kills
+        the whole unattended run and forces a manual resume, so the ceiling
+        should only trip on genuinely stuck requests.
         """
         last: httpx.Response | None = None
         last_exc: httpx.TransportError | None = None

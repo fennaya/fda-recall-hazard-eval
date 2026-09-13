@@ -312,6 +312,28 @@ class HazardAgent:
     # -- main loop --------------------------------------------------------
 
     def classify(self, example: Example) -> AgentResult:
+        """Classify one example. Never raises.
+
+        A run scores 1,275+ cases over many hours; a provider-side quirk on any
+        single one of them (a malformed response, a model that ignores a forced
+        tool_choice and gets hard-rejected by the API, anything) must not take
+        the whole evaluation down with it. Every failure mode becomes a scored
+        low-confidence Class II prediction with the error recorded, the same way
+        an exhausted turn limit already does, so the case is still measured
+        rather than silently missing from the results.
+        """
+        try:
+            return self._classify_inner(example)
+        except Exception as exc:  # noqa: BLE001 - the whole point is to catch everything
+            return AgentResult(
+                classification="Class II",
+                confidence=0.0,
+                reasoning=f"Agent raised {type(exc).__name__} before submitting: {exc}",
+                precedents_cited=[],
+                error=f"exception:{type(exc).__name__}",
+            )
+
+    def _classify_inner(self, example: Example) -> AgentResult:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -335,7 +357,18 @@ class HazardAgent:
             # On the last turn force the answer, so a model that keeps calling
             # tools still produces a classification instead of timing out.
             force = "submit_classification" if turn == MAX_TURNS - 1 else None
-            resp = self.client.chat(messages, tools=TOOLS, tool_choice=force)
+            try:
+                resp = self.client.chat(messages, tools=TOOLS, tool_choice=force)
+            except RuntimeError as exc:
+                if force and _is_tool_choice_mismatch(exc):
+                    # The model tried a different tool anyway and the provider
+                    # hard-rejected the mismatch instead of coercing it. Retrying
+                    # unforced lets the model's actual intended call go through
+                    # (handled by the normal tool-dispatch path below) instead of
+                    # failing this case outright.
+                    resp = self.client.chat(messages, tools=TOOLS, tool_choice=None)
+                else:
+                    raise
             total_ms += resp.latency_ms
             all_cached = all_cached and resp.cache_hit
 
@@ -476,6 +509,18 @@ def _parse_loose_json(text: str) -> dict[str, Any] | None:
                 "_recovered": True,
             }
     return None
+
+
+def _is_tool_choice_mismatch(exc: RuntimeError) -> bool:
+    """True if a provider rejected a response because the model called a
+    different tool than the one an earlier turn forced via tool_choice.
+
+    Observed on Groq/gpt-oss-120b: forcing tool_choice does not always stop the
+    model from attempting a different tool, and the API hard-rejects the
+    mismatch (400 tool_use_failed) rather than coercing or ignoring it.
+    """
+    text = str(exc).lower()
+    return "tool_use_failed" in text or "does not match request.tool_choice" in text
 
 
 def _normalise_class(value: Any) -> tuple[str, str | None]:

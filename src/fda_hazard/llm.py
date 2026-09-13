@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ PROVIDERS: dict[str, Provider] = {
         name="groq",
         base_url="https://api.groq.com/openai/v1",
         env_var="GROQ_API_KEY",
-        default_model="llama-3.3-70b-versatile",
+        default_model="openai/gpt-oss-120b",
         docs="https://console.groq.com/keys",
     ),
     "openrouter": Provider(
@@ -302,6 +303,67 @@ class LLMClient:
             )
         return message.get("content") or "", calls
 
+    def _request_with_retry(
+        self, payload: dict[str, Any], max_attempts: int = 6
+    ) -> httpx.Response:
+        """POST with backoff on 429 (rate limit), 5xx, and connection failures.
+
+        Groq's free tier caps tokens-per-minute well below what one recall
+        classification (prompt + tool schemas) can need, so hitting 429 on the
+        very first request is normal, not exceptional -- it must be retried,
+        not raised. A 1,275-case run also runs long enough that a transient DNS
+        blip or dropped connection (httpx.TransportError) is expected at some
+        point; without retrying those too, one flaky lookup kills the entire
+        evaluation instead of the one request that hit it.
+        """
+        last: httpx.Response | None = None
+        last_exc: httpx.TransportError | None = None
+        for attempt in range(max_attempts):
+            try:
+                resp = self._client.post(
+                    self._endpoint(), headers=self._headers(), json=payload
+                )
+            except httpx.TransportError as exc:
+                last_exc = exc
+                last = None
+                time.sleep(min(2**attempt, 30))
+                continue
+            if resp.status_code < 400:
+                return resp
+            last = resp
+            last_exc = None
+            if resp.status_code == 429 or resp.status_code >= 500:
+                wait = self._retry_after(resp) or min(2**attempt, 30)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(
+                f"{self.provider.name} returned {resp.status_code}: {resp.text[:600]}"
+            )
+        if last is not None:
+            raise RuntimeError(
+                f"{self.provider.name} returned {last.status_code} after "
+                f"{max_attempts} attempts: {last.text[:600]}"
+            )
+        raise RuntimeError(
+            f"{self.provider.name} unreachable after {max_attempts} attempts: "
+            f"{last_exc}"
+        ) from last_exc
+
+    @staticmethod
+    def _retry_after(resp: httpx.Response) -> float | None:
+        header = resp.headers.get("retry-after")
+        if header:
+            try:
+                return float(header)
+            except ValueError:
+                pass
+        try:
+            msg = resp.json().get("error", {}).get("message", "")
+        except Exception:  # noqa: BLE001 - fall back to exponential backoff
+            return None
+        m = re.search(r"try again in ([\d.]+)s", msg)
+        return float(m.group(1)) + 0.5 if m else None
+
     # -- public -----------------------------------------------------------
 
     def chat(
@@ -323,14 +385,8 @@ class LLMClient:
                 )
 
         started = time.perf_counter()
-        resp = self._client.post(
-            self._endpoint(), headers=self._headers(), json=payload
-        )
+        resp = self._request_with_retry(payload)
         ms = int((time.perf_counter() - started) * 1000)
-        if resp.status_code >= 400:
-            raise RuntimeError(
-                f"{self.provider.name} returned {resp.status_code}: {resp.text[:600]}"
-            )
         body = resp.json()
         self.calls_made += 1
         if self.use_cache:

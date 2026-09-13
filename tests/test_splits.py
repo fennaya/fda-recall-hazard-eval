@@ -94,3 +94,83 @@ def test_example_text_combines_description_and_reason(corpus):
 def test_example_year(corpus):
     e = load_split(corpus, "test", CUTOFF)[0]
     assert e.year == 2025
+
+
+# -- stratified sampling ----------------------------------------------------
+
+
+def test_stratified_sample_preserves_class_proportions(conn):
+    records = (
+        [make_record(f"II-{i}", "Class II", "2025-06-01", f"e2-{i}") for i in range(80)]
+        + [make_record(f"I-{i}", "Class I", "2025-06-01", f"e1-{i}") for i in range(10)]
+        + [make_record(f"III-{i}", "Class III", "2025-06-01", f"e3-{i}") for i in range(10)]
+    )
+    insert(conn, records)
+    test = load_split(conn, "test", CUTOFF)
+    from fda_hazard.splits import stratified_sample
+
+    sample = stratified_sample(test, 20, seed=1)
+    counts = {c: sum(1 for e in sample if e.classification == c) for c in
+              ("Class I", "Class II", "Class III")}
+    assert len(sample) == 20
+    # 80/10/10 split of 100 scaled to 20 -> roughly 16/2/2.
+    assert counts["Class II"] >= 14
+    assert counts["Class I"] >= 1
+    assert counts["Class III"] >= 1
+
+
+def test_stratified_sample_is_deterministic(conn):
+    records = [make_record(f"R-{i}", "Class II", "2025-06-01", f"e-{i}") for i in range(30)]
+    insert(conn, records)
+    test = load_split(conn, "test", CUTOFF)
+    from fda_hazard.splits import stratified_sample
+
+    a = [e.record_key for e in stratified_sample(test, 10, seed=7)]
+    b = [e.record_key for e in stratified_sample(test, 10, seed=7)]
+    assert a == b
+
+
+def test_stratified_sample_different_seeds_differ(conn):
+    records = [make_record(f"R-{i}", "Class II", "2025-06-01", f"e-{i}") for i in range(30)]
+    insert(conn, records)
+    test = load_split(conn, "test", CUTOFF)
+    from fda_hazard.splits import stratified_sample
+
+    a = {e.record_key for e in stratified_sample(test, 10, seed=1)}
+    b = {e.record_key for e in stratified_sample(test, 10, seed=2)}
+    assert a != b
+
+
+def test_stratified_sample_n_greater_than_available_returns_all(corpus):
+    from fda_hazard.splits import stratified_sample
+
+    test = load_split(corpus, "test", CUTOFF)
+    sample = stratified_sample(test, 1000)
+    assert len(sample) == len(test)
+    assert {e.record_key for e in sample} == {e.record_key for e in test}
+
+
+def test_stratified_sample_only_draws_from_the_given_examples(corpus):
+    from fda_hazard.splits import stratified_sample
+
+    train = load_split(corpus, "train", CUTOFF)
+    test_keys = {e.record_key for e in load_split(corpus, "test", CUTOFF)}
+    sample = stratified_sample(train, 3, seed=1)
+    assert all(e.record_key not in test_keys for e in sample)
+
+
+def test_stratified_sample_rejects_zero_or_negative_n(corpus):
+    from fda_hazard.splits import stratified_sample
+
+    test = load_split(corpus, "test", CUTOFF)
+    with pytest.raises(ValueError, match="positive"):
+        stratified_sample(test, 0)
+    with pytest.raises(ValueError, match="positive"):
+        stratified_sample(test, -5)
+
+
+def test_stratified_sample_rejects_empty_input():
+    from fda_hazard.splits import stratified_sample
+
+    with pytest.raises(ValueError, match="zero examples"):
+        stratified_sample([], 5)

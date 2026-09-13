@@ -317,3 +317,140 @@ def test_http_error_surfaces_the_provider_message(conn, monkeypatch):
     monkeypatch.setattr(c._client, "post", lambda *a, **kw: FakeResp())
     with pytest.raises(RuntimeError, match="invalid api key"):
         c.chat(MESSAGES)
+
+
+# -- retry on rate limit ----------------------------------------------------
+
+
+def test_429_is_retried_and_eventually_succeeds(conn, monkeypatch):
+    """Groq's free tier returns 429 on ordinary traffic; that must be retried,
+    not raised."""
+    c = _client(conn, monkeypatch, "groq")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    class RateLimited:
+        status_code = 429
+        headers = {}
+        def json(self):
+            return {"error": {"message": "try again in 0.1s"}}
+        text = '{"error": "rate limited"}'
+
+    class Ok:
+        status_code = 200
+        headers = {}
+        def json(self):
+            return {"choices": [{"message": {"content": "Class II"}}], "usage": {}}
+
+    calls = {"n": 0}
+    def fake_post(*a, **kw):
+        calls["n"] += 1
+        return RateLimited() if calls["n"] < 3 else Ok()
+
+    monkeypatch.setattr(c._client, "post", fake_post)
+    resp = c.chat(MESSAGES)
+    assert resp.text == "Class II"
+    assert calls["n"] == 3
+
+
+def test_429_exhausting_all_attempts_raises(conn, monkeypatch):
+    c = _client(conn, monkeypatch, "groq")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    class AlwaysLimited:
+        status_code = 429
+        headers = {}
+        def json(self):
+            return {"error": {"message": "try again in 0.1s"}}
+        text = "rate limited forever"
+
+    monkeypatch.setattr(c._client, "post", lambda *a, **kw: AlwaysLimited())
+    with pytest.raises(RuntimeError, match="429"):
+        c.chat(MESSAGES)
+
+
+def test_4xx_other_than_429_is_not_retried(conn, monkeypatch):
+    c = _client(conn, monkeypatch, "groq")
+
+    class BadRequest:
+        status_code = 400
+        headers = {}
+        text = "bad request"
+
+    calls = {"n": 0}
+    def fake_post(*a, **kw):
+        calls["n"] += 1
+        return BadRequest()
+
+    monkeypatch.setattr(c._client, "post", fake_post)
+    with pytest.raises(RuntimeError, match="400"):
+        c.chat(MESSAGES)
+    assert calls["n"] == 1
+
+
+def test_retry_after_header_is_honoured(conn, monkeypatch):
+    c = _client(conn, monkeypatch, "groq")
+    slept = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+
+    class RateLimited:
+        status_code = 429
+        headers = {"retry-after": "2.5"}
+        def json(self):
+            return {}
+        text = "rate limited"
+
+    class Ok:
+        status_code = 200
+        headers = {}
+        def json(self):
+            return {"choices": [{"message": {"content": "x"}}], "usage": {}}
+
+    calls = {"n": 0}
+    def fake_post(*a, **kw):
+        calls["n"] += 1
+        return RateLimited() if calls["n"] == 1 else Ok()
+
+    monkeypatch.setattr(c._client, "post", fake_post)
+    c.chat(MESSAGES)
+    assert slept == [2.5]
+
+
+def test_transport_error_is_retried_and_recovers(conn, monkeypatch):
+    """A DNS blip or dropped connection mid-run must not kill the whole
+    evaluation; it must be retried like a 429."""
+    import httpx as _httpx
+
+    c = _client(conn, monkeypatch, "groq")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    class Ok:
+        status_code = 200
+        headers = {}
+        def json(self):
+            return {"choices": [{"message": {"content": "Class II"}}], "usage": {}}
+
+    calls = {"n": 0}
+    def fake_post(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise _httpx.ConnectError("getaddrinfo failed")
+        return Ok()
+
+    monkeypatch.setattr(c._client, "post", fake_post)
+    resp = c.chat(MESSAGES)
+    assert resp.text == "Class II"
+    assert calls["n"] == 3
+
+
+def test_transport_error_exhausting_attempts_raises_with_cause(conn, monkeypatch):
+    import httpx as _httpx
+
+    c = _client(conn, monkeypatch, "groq")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    def always_fails(*a, **kw):
+        raise _httpx.ConnectError("getaddrinfo failed")
+
+    monkeypatch.setattr(c._client, "post", always_fails)
+    with pytest.raises(RuntimeError, match="unreachable after"):
+        c.chat(MESSAGES)

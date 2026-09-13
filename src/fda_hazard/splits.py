@@ -161,6 +161,51 @@ def class_counts(examples: Iterable[Example]) -> dict[str, int]:
     return counts
 
 
+def stratified_sample(
+    examples: list[Example], n: int, seed: int = 20250101
+) -> list[Example]:
+    """A deterministic, class-proportional subsample of `examples`.
+
+    A plain --limit prefix cut is biased here: class share drifts across the
+    test window's own timeline (Class II is 80.2% of train but 87.5% of test
+    overall), so truncating to "the first N by date" would not even match the
+    test split's own distribution, let alone the corpus's. Sampling within each
+    class independently keeps the sample representative regardless of n.
+
+    Raises rather than silently returning fewer than requested if `examples` is
+    empty, so a caller never mistakes "no data" for "a valid small sample".
+    """
+    import random
+
+    if not examples:
+        raise ValueError("cannot sample from zero examples")
+    if n <= 0:
+        raise ValueError(f"sample size must be positive, got {n}")
+    if n >= len(examples):
+        return sorted(examples, key=lambda e: e.record_key)
+
+    by_class: dict[str, list[Example]] = {}
+    for e in examples:
+        by_class.setdefault(e.classification, []).append(e)
+
+    total = len(examples)
+    rng = random.Random(seed)
+    sample: list[Example] = []
+    remaining = n
+    classes = sorted(by_class)  # deterministic iteration order
+    for i, cls in enumerate(classes):
+        pool = by_class[cls]
+        if i == len(classes) - 1:
+            take = min(remaining, len(pool))  # last class absorbs rounding
+        else:
+            take = min(len(pool), round(n * len(pool) / total))
+            take = min(take, remaining)
+        sample.extend(rng.sample(pool, take))
+        remaining -= take
+
+    return sorted(sample, key=lambda e: e.record_key)
+
+
 def main() -> int:
     from .db import connect
 

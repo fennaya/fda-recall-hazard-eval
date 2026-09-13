@@ -157,13 +157,24 @@ CREATE TABLE IF NOT EXISTS drug_context_cache (
 
 
 def connect(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
-    """Open a connection with sane defaults and the schema applied."""
+    """Open a connection with sane defaults and the schema applied.
+
+    A sqlite3.Connection is not safe to use concurrently from multiple threads.
+    The evaluation driver runs one worker thread per concurrent LLM call, and
+    gives each its own connection via this function, so no connection is ever
+    touched by two threads at once. check_same_thread=False only relaxes
+    sqlite3's same-thread assertion for the one case that still crosses a
+    thread boundary: the pool closing a worker's connection from the main
+    thread after that worker is done with it. busy_timeout lets concurrent
+    writes (mostly to llm_cache) queue instead of raising "database is locked".
+    """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.executescript(SCHEMA)
     return conn
 

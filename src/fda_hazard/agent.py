@@ -28,69 +28,48 @@ from .llm import LLMClient
 from .retrieval import PrecedentIndex
 from .splits import Example
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 # FDA's own definitions, quoted so the agent reasons against the actual
 # standard rather than a vibe about severity. 21 CFR 7.3(m).
+#
+# Kept deliberately tight: this text, the tool schemas, and every tool result
+# are resent in full on every turn of the conversation, so their size is
+# multiplied by turn count. On a rate-limited free tier that multiplication is
+# what actually determines whether a case finishes or stalls, not the prompt's
+# absolute length in isolation.
 SYSTEM_PROMPT = """\
-You classify FDA drug recalls into FDA's own hazard classes. You are replicating \
-a decision FDA already made; your output is graded against their classification.
+You classify FDA drug recalls into FDA's hazard classes (21 CFR 7.3(m)), \
+replicating a decision FDA already made.
 
-The three classes, per 21 CFR 7.3(m):
+Class I: reasonable probability of serious adverse health consequences or death.
+Class II: temporary/reversible consequences, or serious consequences are remote.
+Class III: not likely to cause adverse health consequences.
 
-Class I  - a reasonable probability that use of, or exposure to, the product \
-will cause SERIOUS ADVERSE HEALTH CONSEQUENCES OR DEATH.
-Class II - use of, or exposure to, the product may cause temporary or medically \
-reversible adverse health consequences, or the probability of serious adverse \
-health consequences is REMOTE.
-Class III - use of, or exposure to, the product is NOT LIKELY to cause adverse \
-health consequences.
+Method: identify the actual physical/chemical defect, reason about its clinical \
+consequence for the patient (what the drug treats, route, who takes it, effect \
+of a wrong/absent/contaminated/misidentified dose), weigh any precedent \
+(close precedent is strong evidence, distant precedent is weak), then decide.
 
-How to decide:
+Calibration: sterility failures, wrong-drug/cross-contamination, undeclared \
+allergens, and subpotent/superpotent life-supporting drugs skew Class I. Most \
+stability/dissolution/impurity/potency issues in oral solids skew Class II \
+(the most common class). Labeling errors not affecting identity/strength/safe \
+use, and cosmetic/packaging defects, skew Class III. Voluntary vs. mandated and \
+distribution breadth are not severity signals.
 
-1. Identify the actual defect. Not the paperwork around it - the physical or \
-chemical failure in the product as distributed.
-2. Reason about the clinical consequence of that defect for the patient who \
-takes the affected unit. Consider: what the drug treats, how it is \
-administered, who takes it, and what happens if the dose is wrong, absent, \
-contaminated, or misidentified.
-3. Weigh the precedents you retrieve. FDA is highly consistent for recurring \
-defect types, so a close precedent is strong evidence. A distant precedent is \
-weak evidence - say so rather than following it.
-4. Choose the class that matches the clinical consequence.
-
-Calibration notes drawn from how FDA actually classifies:
-
-- Sterility failures in injectables, cross-contamination with a different \
-active ingredient, undeclared allergens, and life-supporting drugs that are \
-subpotent or superpotent tend toward Class I.
-- Most stability, dissolution, impurity, and moderate potency failures in oral \
-solid dosage forms tend toward Class II. Class II is by far the most common \
-class overall.
-- Labeling errors that do not affect identity, strength, or safe use, cosmetic \
-or packaging defects, and minor documentation failures tend toward Class III.
-- A recall being voluntary, or nationwide, says little about hazard. Do not use \
-distribution breadth as a severity signal.
-
-Be decisive. Give one class, not a hedge. Set confidence honestly: low \
-confidence is useful information, an inflated one is not."""
+Be decisive: one class, not a hedge. Confidence should be honest, not inflated."""
 
 USER_TEMPLATE = """\
 Classify this drug recall.
 
-PRODUCT DESCRIPTION:
-{product_description}
+PRODUCT DESCRIPTION: {product_description}
 
-REASON FOR RECALL:
-{reason_for_recall}
+REASON FOR RECALL: {reason_for_recall}
 
-ADDITIONAL CONTEXT:
-recalling firm: {recalling_firm}
-distribution pattern: {distribution_pattern}
-initiation: {recall_initiation_date}
+firm: {recalling_firm} | distribution: {distribution_pattern} | initiated: {recall_initiation_date}
 
-Use your tools if they would change your answer, then call \
-submit_classification."""
+Use tools only if they would change your answer, then call submit_classification."""
 
 
 def _tool(name: str, description: str, parameters: dict) -> dict:
@@ -104,20 +83,25 @@ def _tool(name: str, description: str, parameters: dict) -> dict:
     }
 
 
+# Fewer turns and fewer precedents per call bound how much the conversation can
+# grow: every prior turn (system prompt, tool schemas, and every tool result) is
+# resent on each subsequent call, so cost compounds with both knobs.
+MAX_TURNS = 4
+MAX_PRECEDENTS_PER_CALL = 5
+
+# Tool descriptions are kept short for the same reason as the system prompt:
+# they are resent on every turn.
 TOOLS = [
     _tool(
         "lookup_drug_context",
-        "Look up a drug in the openFDA label and NDC endpoints to get its "
-        "indication, route of administration, pharmacologic class, and whether "
-        "it carries a boxed warning. Use this when the clinical consequence of "
-        "the defect depends on what the drug is for or how it is given. Often "
-        "returns no match, which is normal - proceed on the recall text.",
+        "Look up the drug in openFDA label/NDC data (indication, route, boxed "
+        "warning). Often finds nothing - that's normal, proceed on the recall text.",
         {
             "type": "object",
             "properties": {
                 "product_description": {
                     "type": "string",
-                    "description": "The product description text to resolve a drug from.",
+                    "description": "Product description to resolve a drug from.",
                 }
             },
             "required": ["product_description"],
@@ -125,21 +109,18 @@ TOOLS = [
     ),
     _tool(
         "find_precedents",
-        "Retrieve the most similar historical recalls that FDA has already "
-        "classified, with their classifications. These come only from recalls "
-        "predating the evaluation period. Use this to check how FDA has treated "
-        "this defect type before.",
+        "Retrieve similar past recalls FDA already classified (train-split only, "
+        "predates this evaluation). Use to check how FDA has treated this defect before.",
         {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Defect description to find precedent for. Describe "
-                    "the defect and product type, not the firm name.",
+                    "description": "Defect/product type to match, not the firm name.",
                 },
                 "k": {
                     "type": "integer",
-                    "description": "How many precedents to return (1-10).",
+                    "description": f"Precedents to return (1-{MAX_PRECEDENTS_PER_CALL}).",
                 },
             },
             "required": ["query"],
@@ -147,8 +128,7 @@ TOOLS = [
     ),
     _tool(
         "submit_classification",
-        "Submit your final hazard classification. You must call this exactly "
-        "once to finish.",
+        "Submit your final hazard classification. Call exactly once to finish.",
         {
             "type": "object",
             "properties": {
@@ -157,28 +137,21 @@ TOOLS = [
                     "enum": list(LABEL_CLASSES),
                     "description": "FDA hazard class.",
                 },
-                "confidence": {
-                    "type": "number",
-                    "description": "Your confidence, 0.0 to 1.0.",
-                },
+                "confidence": {"type": "number", "description": "0.0 to 1.0."},
                 "reasoning": {
                     "type": "string",
-                    "description": "Why this class: the defect, its clinical "
-                    "consequence, and how the precedents bear on it.",
+                    "description": "Defect, clinical consequence, and precedent basis.",
                 },
                 "precedents_cited": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "record_keys of precedents that actually "
-                    "informed your answer. Empty if none did.",
+                    "description": "record_keys that actually informed the answer.",
                 },
             },
             "required": ["classification", "confidence", "reasoning", "precedents_cited"],
         },
     ),
 ]
-
-MAX_TURNS = 6
 
 
 @dataclass
@@ -254,7 +227,7 @@ class HazardAgent:
                 k = int(args.get("k") or self.default_k)
             except (TypeError, ValueError):
                 k = self.default_k
-            k = max(1, min(k, 10))
+            k = max(1, min(k, MAX_PRECEDENTS_PER_CALL))
             # Structural guard: the example being classified can never be
             # returned as its own precedent, even if it somehow sits in train.
             hits = self.index.search(
@@ -417,7 +390,10 @@ class HazardAgent:
         self._http.close()
 
 
-TOOL_RESULT_BUDGET = 6000
+# Small on purpose: this text is resent in full on every subsequent turn of the
+# conversation, so it is the single biggest lever on tokens-per-case on a
+# rate-limited provider.
+TOOL_RESULT_BUDGET = 2000
 
 
 def serialise_tool_result(result: dict[str, Any], budget: int = TOOL_RESULT_BUDGET) -> str:

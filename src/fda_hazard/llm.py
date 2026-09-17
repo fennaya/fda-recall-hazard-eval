@@ -332,7 +332,17 @@ class LLMClient:
             except httpx.TransportError as exc:
                 last_exc = exc
                 last = None
-                time.sleep(min(2**attempt, 30))
+                wait = min(2**attempt, 30)
+                # A silent multi-minute retry loop looks identical to a hung
+                # process from the outside -- print so a long stall is visible
+                # in the log instead of a black box (found the hard way during
+                # a live run: established connections, idle CPU, zero log output).
+                print(
+                    f"[retry] {self.provider.name} connection error on attempt "
+                    f"{attempt + 1}/{max_attempts} ({exc}); waiting {wait}s",
+                    flush=True,
+                )
+                time.sleep(wait)
                 continue
             if resp.status_code < 400:
                 return resp
@@ -340,6 +350,11 @@ class LLMClient:
             last_exc = None
             if resp.status_code == 429 or resp.status_code >= 500:
                 wait = self._retry_after(resp) or min(2**attempt, 30)
+                print(
+                    f"[retry] {self.provider.name} returned {resp.status_code} on "
+                    f"attempt {attempt + 1}/{max_attempts}; waiting {wait:.1f}s",
+                    flush=True,
+                )
                 time.sleep(wait)
                 continue
             raise RuntimeError(
@@ -393,6 +408,12 @@ class LLMClient:
         started = time.perf_counter()
         resp = self._request_with_retry(payload)
         ms = int((time.perf_counter() - started) * 1000)
+        if ms > 20_000:
+            # httpx's timeout resets on any inbound activity (keep-alives
+            # included), so a single call can legitimately run for minutes
+            # without ever hitting a retry path -- print so that shows up as
+            # "the model is slow" rather than "the process looks hung".
+            print(f"[slow] {self.provider.name} call took {ms / 1000:.1f}s", flush=True)
         body = resp.json()
         self.calls_made += 1
         if self.use_cache:

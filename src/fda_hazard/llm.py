@@ -22,6 +22,8 @@ from typing import Any, Literal
 
 import httpx
 
+from .budget import TokenBudget
+
 ProviderName = Literal["groq", "openrouter", "baseten", "anthropic"]
 
 
@@ -153,6 +155,7 @@ class LLMClient:
         max_tokens: int = 2048,
         timeout: float = 120.0,
         use_cache: bool = True,
+        budget: TokenBudget | None = None,
     ) -> None:
         self.conn = conn
         self.provider = provider or resolve_provider()
@@ -160,6 +163,7 @@ class LLMClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.use_cache = use_cache
+        self.budget = budget
         self._client = httpx.Client(timeout=timeout)
         self.calls_made = 0
         self.cache_hits = 0
@@ -421,15 +425,22 @@ class LLMClient:
 
         text, calls = self._parse(body, self.provider.dialect)
         usage = body.get("usage") or {}
+        pt = usage.get("prompt_tokens") or usage.get("input_tokens")
+        ct = usage.get("completion_tokens") or usage.get("output_tokens")
+        if self.budget is not None:
+            # Only real (non-cache-hit) calls count -- a cache hit costs
+            # nothing and must never move the run closer to the ceiling. This
+            # can raise BudgetExceeded; the response above is already safely
+            # cached, so nothing is lost, we simply don't get to use it.
+            self.budget.add_call(pt, ct)
         return ChatResponse(
             text=text,
             tool_calls=calls,
             raw=body,
             cache_hit=False,
             latency_ms=ms,
-            prompt_tokens=usage.get("prompt_tokens") or usage.get("input_tokens"),
-            completion_tokens=usage.get("completion_tokens")
-            or usage.get("output_tokens"),
+            prompt_tokens=pt,
+            completion_tokens=ct,
         )
 
     def close(self) -> None:

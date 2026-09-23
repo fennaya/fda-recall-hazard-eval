@@ -39,6 +39,14 @@ def git_sha() -> tuple[str | None, bool]:
         return None, False
 
 
+#: Recognised agent architectures. A run's predictions must all agree on one.
+#: 'tool_loop' -- the model decides when to call find_precedents /
+#: lookup_drug_context, in a multi-turn conversation (agent.py's HazardAgent).
+#: 'single_call' -- retrieval and drug-context lookup happen in Python before
+#: the model ever sees the case; one call, same output schema.
+ARCHITECTURES = ("tool_loop", "single_call")
+
+
 def record_run(
     conn: sqlite3.Connection,
     *,
@@ -48,6 +56,7 @@ def record_run(
     predictions: Sequence[str],
     cutoff: str,
     split: str = "test",
+    architecture: str = "tool_loop",
     prompt_version: str | None = None,
     prompt_sha: str | None = None,
     model: str | None = None,
@@ -57,7 +66,14 @@ def record_run(
     details: Sequence[dict[str, Any]] | None = None,
     notes: str | None = None,
 ) -> str:
-    """Write one eval run plus a row per scored example. Returns the run uid."""
+    """Write one eval run plus a row per scored example. Returns the run uid.
+
+    `architecture` is the run's declared design. Each example in `details` may
+    also carry its own "architecture" key (e.g. a per-case fallback path); if
+    any of those disagree with each other or with the declared one, this
+    raises rather than writing a run that silently blends two different
+    systems' answers into one score.
+    """
     if len(examples) != len(predictions):
         raise ValueError(
             f"{len(examples)} examples but {len(predictions)} predictions"
@@ -66,21 +82,47 @@ def record_run(
         raise ValueError(
             f"metrics scored {metrics.n} but {len(examples)} examples were passed"
         )
+    if architecture not in ARCHITECTURES:
+        raise ValueError(
+            f"unknown architecture {architecture!r}; choose from {ARCHITECTURES}"
+        )
+
+    detail_by_key: dict[str, dict[str, Any]] = {}
+    if details:
+        detail_by_key = {d["record_key"]: d for d in details}
+
+    resolved: dict[str, str] = {}
+    for ex in examples:
+        d = detail_by_key.get(ex.record_key, {})
+        resolved[ex.record_key] = d.get("architecture") or architecture
+    distinct = set(resolved.values())
+    if len(distinct) > 1:
+        counts = {a: sum(1 for v in resolved.values() if v == a) for a in distinct}
+        raise ValueError(
+            f"refusing to record a run that mixes architectures: {counts}. "
+            "Score each architecture as its own separate run instead."
+        )
+    if distinct and distinct != {architecture}:
+        raise ValueError(
+            f"every example resolved to architecture {next(iter(distinct))!r}, "
+            f"which does not match the declared architecture={architecture!r}"
+        )
 
     uid = uuid.uuid4().hex[:12]
     sha, dirty = git_sha()
     conn.execute(
         """INSERT INTO eval_runs (
-               run_uid, created_at, system, git_sha, git_dirty, prompt_version,
-               prompt_sha, model, provider, split, split_cutoff, n_examples,
-               accuracy, macro_f1, total_cost, mean_cost, class1_recall,
-               class1_precision, class1_f1, class1_missed, metrics_json,
-               config_json, duration_s, notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               run_uid, created_at, system, architecture, git_sha, git_dirty,
+               prompt_version, prompt_sha, model, provider, split, split_cutoff,
+               n_examples, accuracy, macro_f1, total_cost, mean_cost,
+               class1_recall, class1_precision, class1_f1, class1_missed,
+               metrics_json, config_json, duration_s, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             uid,
             datetime.now(timezone.utc).isoformat(timespec="seconds"),
             system,
+            architecture,
             sha,
             int(dirty),
             prompt_version,
@@ -105,10 +147,6 @@ def record_run(
         ),
     )
 
-    detail_by_key: dict[str, dict[str, Any]] = {}
-    if details:
-        detail_by_key = {d["record_key"]: d for d in details}
-
     rows = []
     for ex, pred in zip(examples, predictions, strict=True):
         d = detail_by_key.get(ex.record_key, {})
@@ -116,6 +154,7 @@ def record_run(
             (
                 uid,
                 ex.record_key,
+                resolved[ex.record_key],
                 ex.classification,
                 pred,
                 int(pred == ex.classification),
@@ -130,9 +169,10 @@ def record_run(
         )
     conn.executemany(
         """INSERT INTO predictions (
-               run_uid, record_key, truth, predicted, correct, cost, confidence,
-               reasoning, precedents_json, tool_calls_json, latency_ms, cache_hit)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               run_uid, record_key, architecture, truth, predicted, correct, cost,
+               confidence, reasoning, precedents_json, tool_calls_json, latency_ms,
+               cache_hit)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         rows,
     )
     conn.commit()

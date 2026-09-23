@@ -165,10 +165,14 @@ class AgentResult:
     latency_ms: int = 0
     cache_hit: bool = True
     error: str | None = None
+    #: 'tool_loop' (this class) or 'single_call' (agent_single.py). Carried
+    #: through to record_run() so a run can never silently blend the two.
+    architecture: str = "tool_loop"
 
     def to_detail(self, record_key: str) -> dict[str, Any]:
         return {
             "record_key": record_key,
+            "architecture": self.architecture,
             "confidence": self.confidence,
             "reasoning": self.reasoning,
             "precedents": {

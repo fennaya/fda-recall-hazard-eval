@@ -146,3 +146,84 @@ def test_split_distribution_counts_match_the_split(corpus):
     dist = q.split_distribution(corpus, CUTOFF)
     assert dist["train_total"] == len(load_split(corpus, "train", CUTOFF))
     assert dist["test_total"] == len(load_split(corpus, "test", CUTOFF))
+
+
+# -- no-mixing rule (Step 3) -------------------------------------------------
+# A scored run must never blend predictions from two different agent
+# architectures (tool_loop vs single_call). This is the test the plan asked
+# for: it must FAIL (raise) if a run mixes them.
+
+
+def test_record_run_rejects_mixed_architectures(corpus):
+    test = load_split(corpus, "test", CUTOFF)
+    preds = [II, II, II]
+    details = [
+        {"record_key": test[0].record_key, "architecture": "tool_loop"},
+        {"record_key": test[1].record_key, "architecture": "single_call"},
+        {"record_key": test[2].record_key, "architecture": "tool_loop"},
+    ]
+    metrics = score([e.classification for e in test], preds)
+    with pytest.raises(ValueError, match="mixes architectures"):
+        record_run(
+            corpus, system="agent", metrics=metrics, examples=test,
+            predictions=preds, cutoff=CUTOFF, details=details,
+        )
+    # And nothing partial got written.
+    assert corpus.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0] == 0
+    assert corpus.execute("SELECT COUNT(*) FROM predictions").fetchone()[0] == 0
+
+
+def test_record_run_rejects_details_disagreeing_with_declared_architecture(corpus):
+    test = load_split(corpus, "test", CUTOFF)
+    preds = [II, II, II]
+    details = [{"record_key": e.record_key, "architecture": "single_call"} for e in test]
+    metrics = score([e.classification for e in test], preds)
+    with pytest.raises(ValueError, match="does not match the declared architecture"):
+        record_run(
+            corpus, system="agent", metrics=metrics, examples=test,
+            predictions=preds, cutoff=CUTOFF, architecture="tool_loop", details=details,
+        )
+
+
+def test_record_run_accepts_a_single_consistent_architecture(corpus):
+    test = load_split(corpus, "test", CUTOFF)
+    preds = [II, II, II]
+    details = [{"record_key": e.record_key, "architecture": "single_call"} for e in test]
+    metrics = score([e.classification for e in test], preds)
+    uid = record_run(
+        corpus, system="agent", metrics=metrics, examples=test,
+        predictions=preds, cutoff=CUTOFF, architecture="single_call", details=details,
+    )
+    row = corpus.execute(
+        "SELECT DISTINCT architecture FROM predictions WHERE run_uid=?", (uid,)
+    ).fetchall()
+    assert [r["architecture"] for r in row] == ["single_call"]
+    assert corpus.execute(
+        "SELECT architecture FROM eval_runs WHERE run_uid=?", (uid,)
+    ).fetchone()["architecture"] == "single_call"
+
+
+def test_record_run_defaults_to_tool_loop_with_no_details(corpus):
+    """Baselines and the existing agent path never pass an 'architecture' key
+    in details -- they must keep working exactly as before, tagged tool_loop."""
+    test = load_split(corpus, "test", CUTOFF)
+    preds = [II, II, II]
+    metrics = score([e.classification for e in test], preds)
+    uid = record_run(
+        corpus, system="baseline_majority", metrics=metrics, examples=test,
+        predictions=preds, cutoff=CUTOFF,
+    )
+    assert corpus.execute(
+        "SELECT architecture FROM eval_runs WHERE run_uid=?", (uid,)
+    ).fetchone()["architecture"] == "tool_loop"
+
+
+def test_record_run_rejects_unknown_architecture_name(corpus):
+    test = load_split(corpus, "test", CUTOFF)
+    preds = [II, II, II]
+    metrics = score([e.classification for e in test], preds)
+    with pytest.raises(ValueError, match="unknown architecture"):
+        record_run(
+            corpus, system="agent", metrics=metrics, examples=test,
+            predictions=preds, cutoff=CUTOFF, architecture="ensemble_vote",
+        )

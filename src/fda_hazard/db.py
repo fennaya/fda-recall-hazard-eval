@@ -85,6 +85,10 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     run_uid TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
     system TEXT NOT NULL,              -- 'agent' | 'baseline_majority' | 'baseline_tfidf'
+    -- 'tool_loop' (model decides when to call find_precedents/lookup_drug_context)
+    -- or 'single_call' (retrieval done in Python, one structured-output call).
+    -- Two different systems; a score must never blend predictions from both.
+    architecture TEXT NOT NULL DEFAULT 'tool_loop',
     git_sha TEXT,
     git_dirty INTEGER NOT NULL DEFAULT 0,
     prompt_version TEXT,
@@ -115,6 +119,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_uid TEXT NOT NULL REFERENCES eval_runs(run_uid) ON DELETE CASCADE,
     record_key TEXT NOT NULL REFERENCES recalls(record_key),
+    architecture TEXT NOT NULL DEFAULT 'tool_loop',
     truth TEXT NOT NULL,
     predicted TEXT NOT NULL,
     correct INTEGER NOT NULL,
@@ -176,7 +181,27 @@ def connect(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent ALTERs for columns added after a database already existed.
+
+    CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+    a new column has to be added by hand for any database created before it
+    was introduced. Safe to run against a database another connection (e.g. a
+    long-running background eval) has open: ADD COLUMN with a DEFAULT doesn't
+    rewrite existing rows or touch what an in-flight INSERT is doing.
+    """
+    for table in ("eval_runs", "predictions"):
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if "architecture" not in cols:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN architecture TEXT NOT NULL "
+                "DEFAULT 'tool_loop'"
+            )
+    conn.commit()
 
 
 def to_iso(yyyymmdd: str | None) -> str | None:

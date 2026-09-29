@@ -3,10 +3,19 @@
 Run `009d14e75268`, n=1,275, the complete held-out test set. All content below
 is read from stored `predictions` rows for that run and from the `recalls`
 table it joins to. **No model was re-run and no reported number changes.**
-Counts quoted here (199 false positives, 24 false negatives, 254 flagged
-Class I, etc.) were independently re-derived from the stored predictions and
-checked against the confusion matrix already reported for this run; they
-match exactly.
+
+**Reconciled Class I flagging counts** (re-derived independently from stored
+`predictions`, cross-checked against the confusion matrix and against
+`eval_runs.class1_precision`, all of which agree exactly): the agent
+predicted Class I on **254** of 1,275 cases; **43** of those are true
+positives (truth also Class I); the remaining **211** are false positives,
+split as **199** from truth=Class II and **12** from truth=Class III.
+43 + 211 = 254. Precision = 43/254 = **16.9%**, matching the stored
+`class1_precision` (0.16929...) exactly. The false-negative count (missed
+Class I) is **24**, matching `class1_missed`. Every count below that refers
+to "the 199 false positives" means specifically the truth=Class II subset
+unless stated otherwise -- this is the set the Step 1 transcript reading
+below is drawn from.
 
 Any grouping choice below (confidence as a tie-break, the failure-mode labels,
 the distribution-breadth rule) is a **post-hoc descriptive categorisation**
@@ -84,8 +93,14 @@ Class I). The evidence instead shows:
    sense; they are cases where FDA's own historical classification for this
    defect category does not fully predict FDA's classification of the new
    instance from text alone. This is the single largest pattern across both
-   error types combined (15 of 30 transcripts read) and argues for a
-   **classification-boundary/consistency limitation**, not an agent bias.
+   error types combined (15 of 30 transcripts read) and is **consistent
+   with** a classification-boundary/consistency limitation rather than an
+   agent bias. This is a hypothesis suggested by the transcripts, not
+   something confirmed here -- no FDA policy or guidance history was
+   consulted to check whether classification practice for these defect
+   categories actually shifted over time (label drift), which is the
+   leading candidate explanation and the first item under "what would fix
+   it" in the README.
 4. Only 2/20 false positives clearly fit "the model saw alarming language and
    ignored contrary evidence" (the cherry-picking pattern), and 1/20 fits a
    route-mismatch variant of the same idea.

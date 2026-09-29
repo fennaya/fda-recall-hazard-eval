@@ -193,11 +193,16 @@ policy or measured consequence data -- see Limitations.
   measured or FDA-published cost. Changing the matrix changes `total_cost`
   and `mean_cost` for every system, including the triage-workload framing's
   interpretation.
-- **The 2 `no_submission` cases are scored as Class II.** Per Step 2's
-  analysis (`analysis/error_analysis.md`), one is an agent-side loop, the
-  other is an unrelated Groq daily-quota exhaustion -- both fell back to a
-  default Class II guess rather than a real classification, and are counted
-  in the reported metrics as such (not dropped).
+- **The 2 `no_submission` cases are scored as Class II, and one of them is
+  not the agent's fault.** `D-0353-2026` is a genuine agent-side loop -- it
+  reworded the same precedent search three times, never submitted, and hit
+  the turn limit. `D-0372-2026` never received a model response at all:
+  Groq's own error body shows its **daily** token quota (200,000) was
+  exhausted, an infrastructure failure, not an agent failure. Both fell back
+  to a default Class II guess and are counted in the reported metrics as
+  such (not dropped), so the agent took a small, uncontested penalty for a
+  provider-side outage on that one case. At 2 of 1,275 cases, this does not
+  change any conclusion above, including the headline.
 - **A second, cheaper architecture exists but was only verified on n=20.**
   `agent_single.py` (retrieval done in Python, one model call instead of an
   average 2.07) was built and tested, and a 20-case free-tier check showed

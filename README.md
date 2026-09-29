@@ -23,8 +23,7 @@ on 1,275 recalls it had never seen.
 | Keyword model, reweighted | 0.560 | **85.1%** | 39.3% | 145 | 1,707 |
 | Agent (gpt-oss-120b on Groq) | 0.472 | 64.2% | 16.9% | 254 | 636 |
 
-Cost weights a missed Class I much higher than a false alarm. The weights are
-my assumption, stated in the code.
+Lower cost is better. Cost weights a missed Class I higher than a false alarm, but not enough: under my weights, always guessing Class II is the cheapest system, even though it misses every Class I recall. Read the cost column with that in mind. The weights are my assumption, stated in the code.
 
 ## What I found
 
@@ -38,7 +37,7 @@ my assumption, stated in the code.
    bupivacaine) classified as Class I by FDA" as its precedent. That is
    not a real record ID from the corpus, and the transcript shows no
    precedent search was ever run before the citation was written.
-4. **Sometimes the agent reasoned well and FDA disagreed with its own past.**
+4. **Sometimes by my reading, the agent reasoned soundly and FDA disagreed with its own past.**
    In all 10 missed Class I recalls, the agent found near-unanimous Class II
    precedent and followed it. FDA still said Class I. Either FDA's practice
    changed over time, or its labels are inconsistent. I don't know which yet.

@@ -103,3 +103,37 @@ message shows its **daily** token quota was exhausted ("Rate limit reached
 ... tokens per day (TPD): Limit 200000, Used 199434, Requested 1481")
 and all 12 retry attempts failed with 429, an infrastructure limit rather
 than anything about this specific input.
+
+---
+
+## Step 3: if this were used as a first-pass screen
+
+Every number below is a direct count over stored `predictions` for the four
+existing runs (`009d14e75268` agent, `203cab070e90` TF-IDF+LR,
+`7418a560876b` TF-IDF+LR balanced, `836a5ffe15ea` majority class), n=1,275
+each. "Cases reviewed per real Class I caught" is `flagged_Class_I /
+true_positives_Class_I` -- the inverse of Class I precision, phrased as a
+workload number: if a reviewer opened every case a system flagged as Class I,
+how many would they open on average to find one that really is.
+
+| System | Flagged Class I | Share of all cases | Class I recall | Reviewed per real catch |
+|---|---:|---:|---:|---:|
+| Majority class | 0 | 0.0% | 0.0% (0/67) | n/a (never flags one) |
+| TF-IDF + LR | 99 | 7.8% | 52.2% (35/67) | 2.83 |
+| TF-IDF + LR (balanced) | 145 | 11.4% | 85.1% (57/67) | 2.54 |
+| **Agent (tool_loop)** | **254** | **19.9%** | **64.2% (43/67)** | **5.91** |
+
+**In plain operational terms:** the agent asks a reviewer to open a fifth of
+the entire test set (254 of 1,275 cases) to find 43 real Class I recalls --
+almost 6 cases opened per real hit. TF-IDF+LR (balanced) asks a reviewer to
+open fewer cases in total (145, or 11.4% of the set) and finds *more* real
+Class I recalls (57 vs 43) at a *better* hit rate (2.54 vs 5.91 opened per
+catch). On this specific framing -- workload per real catch, plus recall --
+**the balanced TF-IDF baseline dominates the agent**: higher recall, lower
+per-catch review burden, for less than half the workload share. The
+unweighted TF-IDF+LR baseline dominates the agent even more sharply on
+workload (2.83 vs 5.91 reviewed per catch) while catching fewer true
+positives outright (35 vs 43). The agent's extra 8 true positives over the
+unweighted baseline (43 vs 35) come from flagging 155 additional cases
+(254 vs 99), of which only 8 are real -- a very poor marginal hit rate on
+the cases it adds beyond what TF-IDF already finds.

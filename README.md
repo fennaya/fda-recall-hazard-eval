@@ -506,3 +506,11 @@ scripts/
                               calling shell (survives the shell/session ending)
 tests/                184 tests
 ```
+
+## License
+
+Code is licensed under the [MIT License](LICENSE). The README, everything
+under `analysis/`, and other written results and commentary are licensed
+under [CC BY 4.0](LICENSE-DATA). The underlying openFDA data keeps its own
+terms (see `LICENSE-DATA` for detail) and is not relicensed by either file.
+See [`CITATION.cff`](CITATION.cff) for citation metadata.

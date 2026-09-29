@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "FDA drug recall hazard classification"
+authors:
+  - given-names: Aya
+    family-names: Emssaad
+repository-code: "https://github.com/fennaya/fda-recall-hazard-eval"
+license: MIT

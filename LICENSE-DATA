@@ -1,0 +1,33 @@
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+Copyright (c) 2026 Aya Emssaad
+
+This license applies to the original written and analytical content of this
+repository: the README, the contents of `analysis/` (including
+`error_analysis.md`), and any other written results, findings, commentary,
+or documentation authored for this project.
+
+You are free to share and adapt this material for any purpose, including
+commercially, under the following terms: you must give appropriate credit,
+provide a link to the license, and indicate if changes were made.
+
+Full license text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+---
+
+## What this license does NOT cover
+
+This repository's `data/recalls.db` is built from the openFDA drug
+enforcement dataset (https://open.fda.gov/data/downloads), a public-domain
+work of the U.S. federal government. openFDA data is not subject to U.S.
+copyright, but is governed by openFDA's own terms of use
+(https://open.fda.gov/terms/) -- consult those terms directly for use of
+the underlying data itself; nothing here relicenses it.
+
+Any third-party text quoted within the data (firm-submitted recall
+descriptions and reasons, as ingested verbatim into `recalls.raw_json` and
+the parsed columns) originates with the recalling firms and openFDA, not
+with this project, and is not relicensed by this file.
+
+Source code in this repository is licensed separately under the MIT
+License -- see `LICENSE`.

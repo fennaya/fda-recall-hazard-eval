@@ -89,3 +89,17 @@ Class I). The evidence instead shows:
 4. Only 2/20 false positives clearly fit "the model saw alarming language and
    ignored contrary evidence" (the cherry-picking pattern), and 1/20 fits a
    route-mismatch variant of the same idea.
+
+---
+
+## Step 2: the 2 `no_submission` cases
+
+`D-0353-2026` and `D-0372-2026` are unrelated: `D-0353-2026` is an
+agent-side loop -- it called `find_precedents` three times with
+near-identical rewordings of the same query plus one `lookup_drug_context`
+call, never called `submit_classification`, and was cut off at the 4-turn
+limit. `D-0372-2026` never got a model response at all: Groq's own error
+message shows its **daily** token quota was exhausted ("Rate limit reached
+... tokens per day (TPD): Limit 200000, Used 199434, Requested 1481")
+and all 12 retry attempts failed with 429, an infrastructure limit rather
+than anything about this specific input.

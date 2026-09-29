@@ -137,3 +137,44 @@ positives outright (35 vs 43). The agent's extra 8 true positives over the
 unweighted baseline (43 vs 35) come from flagging 155 additional cases
 (254 vs 99), of which only 8 are real -- a very poor marginal hit rate on
 the cases it adds beyond what TF-IDF already finds.
+
+---
+
+## Step 4: distribution-breadth error slices
+
+`distribution_pattern` is a native column on `recalls`, populated for
+17,937 of 17,938 records -- no openFDA join was needed. It is free text
+from firms (seen: "Nationwide in the USA", "US Nationwide.",
+"U.S. Nationwide", "DE and NC", "MA", ...), so `analysis/
+distribution_buckets.py` documents one fixed rule, checked with 8 unit
+tests: contains "nationwide" (any case) -> `nationwide`; else count
+standalone 2-letter tokens matching a US state/territory code -> 0 ->
+`other`, 1 -> `single_state`, 2+ -> `multi_state`. This rule was fixed
+before any error rate was computed and was not adjusted afterward.
+
+**Note on scope:** `distribution_pattern` was already part of the agent's
+prompt in the run being analysed here (see `USER_TEMPLATE` in `agent.py`)
+-- this slice adds no new information the agent didn't already have. It is
+used only to group the run's existing, already-scored predictions for
+reporting, per the constraint that these fields must never become new
+model inputs going forward.
+
+| Bucket | n | Share | Truth=Class II | FP | FP rate | Truth=Class I | FN | FN rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| nationwide | 1,125 | 88.2% | 977 | 170 | 17.4% | 64 | 24 | 37.5% |
+| multi_state | 80 | 6.3% | 77 | 18 | 23.4% | 1 | 0 | 0.0% |
+| single_state | 61 | 4.8% | 54 | 8 | 14.8% | 1 | 0 | 0.0% |
+| other | 9 | 0.7% | 7 | 3 | 42.9% | 1 | 0 | 0.0% |
+
+**Reading this honestly:** false-positive rates are broadly similar across
+the three buckets with usable sample sizes (14.8-23.4% for
+single_state/nationwide/multi_state); the `other` bucket's 42.9% is 3 of 7
+cases, too small to mean anything. The false-negative comparison is not
+usable at all outside `nationwide`: 64 of the 67 true Class I recalls in
+the entire test set are nationwide-distributed, leaving exactly 1 true
+Class I case in each of the other three buckets -- a single case per
+bucket cannot support any FN-rate claim. **Conclusion: distribution
+breadth does not show a clear, sample-size-supported error pattern in this
+data; the one thing this slice does show is that Class I recalls in this
+corpus are overwhelmingly nationwide, which is itself a fact about the
+data rather than about the agent.**

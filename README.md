@@ -1,27 +1,58 @@
-# FDA drug recall hazard classification
+# Can an AI agent triage FDA drug recalls?
 
-Predict FDA's own hazard class (Class I / II / III) for a drug recall from
-its product description and reason text. FDA's label is ground truth,
-measured honestly on a held-out test set.
+[![DOI](https://zenodo.org/badge/DOI/DOI_HERE.svg)](https://doi.org/DOI_HERE)
 
-## The result
+Not better than a simple baseline. I checked.
 
-**The agent does not beat the TF-IDF + LR baseline on macro F1** (0.472 vs
-0.583). That was the target from the start, and it lost.
+When a drug is recalled, FDA assigns a hazard class. **Class I** means the
+product can cause serious harm or death, so it has to be pulled fast and
+deep, down to pharmacies and patients. Class II and III are less severe.
+Getting the class wrong means either under-reacting to a dangerous product
+or flooding a quality team with false alarms.
 
-| System | Accuracy | Macro F1 | Class I recall | Cost |
-| --- | ---: | ---: | ---: | ---: |
-| Majority class | 87.45% | 0.311 | 0.00% | 428 |
-| **TF-IDF + LR** | 82.82% | **0.583** | 52.24% | 651 |
-| TF-IDF + LR (balanced) | 68.08% | 0.560 | 85.07% | 1,707 |
-| **Agent** (Groq, n=1,275) | 73.33% | 0.472 | 64.18% | 636 |
+I built an LLM agent that reads a recall, pulls similar past recalls as
+precedent, and predicts the class. Then I scored it against FDA's own labels
+on 1,275 recalls it had never seen.
 
-What it *does* do: at near-equal cost to TF-IDF (636 vs 651), it trades
-precision for 12 more points of Class I recall (64.2% vs 52.2%) — but at
-only 16.9% Class I precision, and it loses to TF-IDF-balanced on every axis
-of a "first-pass screen" framing (fewer flags, more catches, less review
-burden). Full breakdown, failure patterns, and a named fabricated-citation
-finding: [`analysis/error_analysis.md`](analysis/error_analysis.md).
+## Result
+
+| System | Macro F1 | Class I recall | Class I precision | Flagged as Class I | Cost |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Always guess Class II | 0.311 | 0% | n/a | 0 | 428 |
+| Keyword model (TF-IDF + LR) | **0.583** | 52.2% | 35.4% | 99 | 651 |
+| Keyword model, reweighted | 0.560 | **85.1%** | 39.3% | 145 | 1,707 |
+| Agent (gpt-oss-120b on Groq) | 0.472 | 64.2% | 16.9% | 254 | 636 |
+
+Cost weights a missed Class I much higher than a false alarm. The weights are
+my assumption, stated in the code.
+
+## What I found
+
+1. **The agent lost.** A plain keyword model beats it on the main metric.
+2. **As a screen, it's worse too.** The reweighted keyword model flags fewer
+   cases (145 vs 254) and catches more real Class I recalls (85% vs 64%).
+   A reviewer opens 2.5 cases per real catch instead of 5.9. It does cost
+   more overall under my weights, because it makes other mistakes.
+3. **It made up a source once.** For one false positive, it cited
+   "Sterility failure of injectable anesthetic (e.g., lidocaine,
+   bupivacaine) classified as Class I by FDA" as its precedent. That is
+   not a real record ID from the corpus, and the transcript shows no
+   precedent search was ever run before the citation was written.
+4. **Sometimes the agent reasoned well and FDA disagreed with its own past.**
+   In all 10 missed Class I recalls, the agent found near-unanimous Class II
+   precedent and followed it. FDA still said Class I. Either FDA's practice
+   changed over time, or its labels are inconsistent. I don't know which yet.
+
+Full breakdown, with every failure pattern counted:
+[`analysis/error_analysis.md`](analysis/error_analysis.md)
+
+## Limits
+
+- One model, one provider, one run.
+- The cost weights are an assumption.
+- The 30 errors I read closely were the most costly ones, not a random sample.
+- 2 cases got no answer (one agent loop, one Groq quota cutoff). Both scored as Class II.
+- Data: openFDA enforcement records, snapshot of 2026-09-08.
 
 ## Run it
 
@@ -29,46 +60,22 @@ finding: [`analysis/error_analysis.md`](analysis/error_analysis.md).
 cp .env.example .env    # add one provider key
 uv sync
 uv run -m fda_hazard.ingest
-uv run pytest                  # 184 tests
+uv run pytest           # 184 tests
 uv run -m fda_hazard.baselines
-uv run -m fda_hazard.evaluate  # scores the agent, needs a key
-uv run python run_dashboard.py # http://127.0.0.1:8000
+uv run -m fda_hazard.evaluate
+uv run python run_dashboard.py   # http://127.0.0.1:8000
 ```
 
-Groq's free tier is heavily rate-limited in practice — the full run took
-~11 days of wall-clock, mostly waiting, not computing. Use `--sample N` or
-`--limit N` for a quick check first.
+On Groq's free tier the full run took about 11 days. Try `--sample 20` first.
 
-## What's next
+## Next
 
-- **Test the label-drift hypothesis.** Half the errors read (15/30
-  transcripts) show sound, precedent-grounded reasoning that still missed
-  FDA's call. Leading guess: FDA's own classification practice shifted over
-  time for some defect categories. Unconfirmed — needs FDA guidance history,
-  not more model runs.
-- **Build a cost-sensitive decision rule.** Threshold the agent's confidence
-  against the cost matrix instead of taking its raw label. Needs a real
-  validation split (doesn't exist yet — only train/test) to fit on honestly.
-- **Run `single_call` at full scale.** A second, ~2x cheaper architecture
-  exists (`agent_single.py`) and is tested, but only verified on 20 cases.
-  Needs either a paid key (~$8 estimated) or another week on the free tier.
-- **Try a second model/provider.** Every result above is one model
-  (`openai/gpt-oss-120b`) on one provider (Groq). Whether these failure
-  patterns are model-specific is untested.
+- Test whether FDA's classification drifted over time, or is just noisy.
+- Use the agent's confidence plus the cost weights to set a better threshold.
+- Try a second model.
 
 ## License
 
-Code: [MIT](LICENSE). README, analysis, and written results: [CC BY
-4.0](LICENSE-DATA). openFDA data keeps its own terms — see `LICENSE-DATA`.
-Citation metadata: [`CITATION.cff`](CITATION.cff).
-
-## Layout
-
-```
-src/fda_hazard/     ingest, split, metrics, baselines, retrieval, agent
-                    (two architectures: agent.py, agent_single.py),
-                    evaluate.py, runs.py, queries.py, app.py, templates/
-analysis/           error_analysis.md (the full breakdown), distribution_buckets.py
-scripts/            launch_detached.ps1 (survives the launching session ending)
-tests/              184 tests
-```
+Code: [MIT](LICENSE). Text and analysis: [CC BY 4.0](LICENSE-DATA).
+openFDA data keeps its own terms. Cite via [`CITATION.cff`](CITATION.cff).
+Author: Aya Emssaad.

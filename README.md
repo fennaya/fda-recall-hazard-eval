@@ -62,9 +62,28 @@ image: correct retrieval, near-unanimous concordant Class II precedent,
 sound reasoning -- and still wrong, because FDA classified this specific
 instance as Class I. Combined, **15 of the 30 transcripts read (half)** show
 reasoning that was internally sound and precedent-grounded but still missed
-FDA's actual call. That argues for a classification-boundary/consistency
-limitation in how predictable FDA's own decisions are from text alone, not
-simply a model bias toward alarming language.
+FDA's actual call.
+
+**Named finding: a fabricated citation.** One false positive (`D-0498-2025`)
+cites `"Sterility failure of injectable anesthetic (e.g., lidocaine,
+bupivacaine) classified as Class I by FDA"` as its precedent basis -- not a
+real `record_key`, and the transcript shows no `find_precedents` call was
+ever made. The model invented a precedent rather than retrieving one. This
+is a single occurrence in the 30 transcripts read, not a rate claim, but it
+is a distinct and more serious failure mode than the others and is called
+out separately for that reason.
+
+**Hypothesis, not a finding:** the "correct retrieval, sound reasoning,
+ground truth still diverged" pattern (5/20 false positives, 10/10 false
+negatives) is consistent with a classification-boundary/consistency
+limitation -- FDA's own decisions for a given defect category may not be
+fully predictable from text and precedent alone. This is a plausible reading
+of the transcripts, not something confirmed here: no FDA policy documents,
+guidance changes, or classification-practice timelines were consulted, so
+whether the retrieved precedent was simply outdated relative to a change in
+FDA's practice (label drift over time), or the disagreement reflects
+case-specific detail invisible in the recall text, or something else
+entirely, is untested. See "What would fix it" below.
 
 ### If this were used as a first-pass screen (Step 3)
 
@@ -80,15 +99,22 @@ real hit.
 | TF-IDF + LR (balanced) | 145 | 11.4% | 85.1% (57/67) | 2.54 |
 | **Agent (tool_loop)** | **254** | **19.9%** | **64.2% (43/67)** | **5.91** |
 
-**In plain operational terms:** the agent asks a reviewer to open a fifth of
-the entire test set to find 43 real Class I recalls -- almost 6 opens per
-real hit. The **balanced TF-IDF baseline dominates the agent outright** on
-this framing: higher recall (57 vs 43), at less than half the review burden
-per catch (2.54 vs 5.91), for barely more than half the flagged share (11.4%
-vs 19.9%). Even the unweighted TF-IDF baseline needs far fewer opens per real
-hit (2.83 vs 5.91) despite lower recall. A quality or regulatory team using
-either baseline as a first-pass screen would review less and catch more or
-comparably.
+**Plainly: as a Class I screen, TF-IDF (balanced) catches more Class I
+recalls than the agent (85.1% vs 64.2%), with fewer total flags to review
+(145 vs 254) and fewer reviews needed per real catch (2.54 vs 5.91).** On
+every axis of this specific framing -- recall, flagged share, and workload
+per catch -- it dominates the agent outright. Even the unweighted TF-IDF
+baseline needs far fewer opens per real hit (2.83 vs 5.91) despite lower
+recall (52.2%).
+
+That framing has one important limit: it counts *review workload*, not the
+cost matrix's dollar-equivalent cost. Under the cost matrix, TF-IDF
+(balanced) is the **most expensive** system of the four (total cost 1,707,
+about 4x the majority baseline's 428 and 2.7x the agent's 636) precisely
+because its higher Class I recall comes from also over-predicting Class III
+in places the agent and TF-IDF (unweighted) don't. Which framing matters --
+reviewer opens per catch, or the cost matrix's total -- depends on what a
+team is actually optimizing for; they don't agree with each other here.
 
 ### Supply chain / distribution-breadth slices (Step 4)
 
@@ -122,9 +148,10 @@ changes the bar:
   headline metric on this corpus.
 - **TF-IDF + LR** is the strongest all-round baseline: best macro F1 (0.583),
   and the agent did not beat it.
-- **TF-IDF + LR (balanced)** catches 85% of Class I recalls, dominates the
-  agent on the triage-workload framing above, and does it at less than 3x the
-  majority baseline's cost.
+- **TF-IDF + LR (balanced)** catches 85% of Class I recalls and dominates the
+  agent on the triage-workload framing above (see below), but is the most
+  expensive of the four systems under the cost matrix (total cost 1,707,
+  about 4x the majority baseline's).
 
 ### Class I is reported separately
 
@@ -183,11 +210,19 @@ policy or measured consequence data -- see Limitations.
 
 ### What would fix it (future work, not done here)
 
-A cost-sensitive decision rule -- reclassifying a prediction based on the
-agent's own confidence plus the cost matrix, fit on a genuine validation
-split rather than the test set -- or a calibrated confidence output the
-rule could threshold against, are the natural next steps implied by the
-triage-workload finding above. Neither is implemented in this repository.
+1. **Test the label-drift hypothesis.** Check whether FDA's classification
+   practice for the specific defect categories behind the precedent-divergence
+   pattern (sterility/contamination framing, subpotent life-supporting drugs)
+   has shifted between the precedent's date and the new case's date -- this
+   would confirm or rule out the leading hypothesis above for why sound,
+   precedent-grounded reasoning still missed FDA's call.
+2. A cost-sensitive decision rule -- reclassifying a prediction based on the
+   agent's own confidence plus the cost matrix, fit on a genuine validation
+   split rather than the test set -- or a calibrated confidence output the
+   rule could threshold against, are the natural next steps implied by the
+   triage-workload finding above.
+
+Neither is implemented in this repository.
 
 ---
 

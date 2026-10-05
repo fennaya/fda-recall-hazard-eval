@@ -2,7 +2,8 @@
 
 [![DOI](https://zenodo.org/badge/1396542569.svg)](https://doi.org/10.5281/zenodo.23047558)
 
-Not better than a simple baseline. I checked.
+On 1,275 unseen FDA drug recalls, a plain keyword model beat an LLM agent at predicting FDA's own hazard class (macro F1 0.583 vs 0.472), and the agent once cited a precedent that does not exist.
+
 
 When a drug is recalled, FDA assigns a hazard class. **Class I** means the
 product can cause serious harm or death, so it has to be pulled fast and

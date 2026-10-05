@@ -1,6 +1,6 @@
 # Can an AI agent triage FDA drug recalls?
 
-[![DOI](https://zenodo.org/badge/DOI/DOI_HERE.svg)](https://doi.org/DOI_HERE)
+[![DOI](https://zenodo.org/badge/1396542569.svg)](https://doi.org/10.5281/zenodo.23047558)
 
 Not better than a simple baseline. I checked.
 
